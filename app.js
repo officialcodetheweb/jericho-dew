@@ -173,7 +173,10 @@
       const msg = String(e && e.message || e);
       if (/401|token|expired|unauthor/i.test(msg)) { forget(); }
       show('#scrJoin');
-      $('#jErr').textContent = /full|limit/i.test(msg) ? 'The call is full right now. Please try again shortly.' : 'Could not connect to the call. Check your internet and try again.';
+      $('#jErr').textContent = /full|limit/i.test(msg) ? 'The call is full right now. Please try again shortly.'
+        : /invalid token|unauthor|401/i.test(msg) ? 'Your pass for this service is out of date. Ask the admin to publish the service again, then sign in again.'
+        : /expired|not valid yet|nbf|exp/i.test(msg) ? 'This join link has expired or is not open yet. Ask the admin for the current link.'
+        : `Could not connect to the call (${msg.slice(0, 80)}). Check your internet and try again.`;
       room = null;
       return;
     }
