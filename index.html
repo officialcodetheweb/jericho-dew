@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0a1d52">
+<meta name="description" content="Join the Jericho Afasuo Prayer City voice service">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="JERICHO DEW">
+<title>JERICHO DEW</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/favicon-64.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ============ SIGN IN ============ -->
+<section class="screen" id="scrJoin">
+  <div class="join-wrap">
+    <img class="join-logo" src="logo.png" alt="Jericho Afasuo Prayer City">
+    <h1 class="join-brand">JERICHO <span>DEW</span></h1>
+    <div class="svc-card" id="svcCard">
+      <p class="svc-when" id="svcWhen">Loading service…</p>
+      <h2 id="svcTitle"></h2>
+      <p class="svc-note" id="svcNote"></p>
+      <div class="svc-pick" id="svcPick" hidden></div>
+    </div>
+    <form class="join-form" id="joinForm" autocomplete="on">
+      <label><span>Username</span><input id="jUser" autocomplete="username" autocapitalize="none" spellcheck="false" required></label>
+      <label><span>Password</span><div class="pw"><input id="jPass" type="password" autocomplete="current-password" required><button type="button" id="pwEye" aria-label="Show password">Show</button></div></label>
+      <label class="remember"><input type="checkbox" id="jRemember" checked> Keep me signed in on this phone</label>
+      <p class="err" id="jErr" role="alert"></p>
+      <button class="btn-join" id="jBtn" type="submit">Join the service</button>
+    </form>
+    <button class="install" id="installBtn" hidden>Install JERICHO DEW on this phone</button>
+    <p class="ios-hint" id="iosHint" hidden>To install: tap <b>Share</b> then <b>Add to Home Screen</b>.</p>
+  </div>
+</section>
+
+<!-- ============ CALL ============ -->
+<section class="screen call" id="scrCall" hidden>
+  <header class="call-head">
+    <img src="logo.png" alt="">
+    <div class="ch-text"><b id="cTitle">Service</b><span id="cSub"><i class="live-dot"></i><span id="cState">Connecting…</span></span></div>
+    <span class="people" id="cCount" title="People in the call">0</span>
+  </header>
+
+  <div class="call-scroll" id="callScroll">
+    <!-- TV screen projected by the admin -->
+    <div class="tv-slot" id="tvSlot" hidden>
+      <div class="tv" id="tv">
+        <div class="tv-screen">
+          <video id="tvVideo" playsinline autoplay muted></video>
+          <div class="tv-static"></div>
+          <div class="tv-glass"></div>
+        </div>
+        <div class="tv-chin"><span class="tv-brand">JERICHO DEW</span><span class="tv-led"></span></div>
+      </div>
+      <div class="tv-feet"><i></i><i></i></div>
+    </div>
+
+    <!-- Now ministering -->
+    <div class="minister" id="minister" hidden>
+      <div class="m-photo" id="mPhoto"></div>
+      <div><span class="m-lbl">Now ministering</span><b id="mName"></b><span id="mTitle"></span></div>
+    </div>
+
+    <div class="banner" id="audioBanner" hidden><span>Sound is paused by your browser.</span><button id="audioOn">Tap to hear</button></div>
+    <div class="banner wait" id="waitBanner" hidden><span class="pulse"></span><span id="waitText">Waiting for an admin to start the service. You will hear everyone once it starts.</span></div>
+
+    <div class="grid" id="grid"></div>
+  </div>
+
+  <!-- dock -->
+  <nav class="dock" id="dock">
+    <button class="d-btn" id="dHand" aria-label="Raise hand"><svg viewBox="0 0 24 24"><path d="M8 13V5.5a1.5 1.5 0 0 1 3 0V12M11 11.5v-8a1.5 1.5 0 0 1 3 0V12M14 11.5V5a1.5 1.5 0 0 1 3 0v8M17 9.5a1.5 1.5 0 0 1 3 0V15a7 7 0 0 1-7 7h-1a7 7 0 0 1-5.4-2.6L3.4 15.6a1.6 1.6 0 0 1 2.4-2l2.2 2.1"/></svg><span>Hand</span></button>
+    <button class="d-btn" id="dChat" aria-label="Messages"><svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.6A8 8 0 1 1 21 12z"/></svg><span>Chat</span><i class="badge" id="chatBadge" hidden></i></button>
+    <button class="d-mic off" id="dMic" aria-label="Microphone"><svg viewBox="0 0 24 24" class="i-on"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg><svg viewBox="0 0 24 24" class="i-off"><path d="M3 3l18 18M9 9v3a3 3 0 0 0 5.1 2.1M15 9.3V6a3 3 0 0 0-5.9-.8M17 16.9A7 7 0 0 1 5 12M19 12a7 7 0 0 1-.1 1.2M12 19v3"/></svg><span id="micLbl">Tap to talk</span></button>
+    <button class="d-btn" id="dAdmin" aria-label="Admin controls" hidden><svg viewBox="0 0 24 24"><path d="M12 2l8 3v6c0 5-3.4 9.4-8 11-4.6-1.6-8-6-8-11V5z"/><path d="M9 12l2 2 4-4"/></svg><span>Admin</span></button>
+    <button class="d-btn leave" id="dLeave" aria-label="Leave"><svg viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3"/></svg><span>Leave</span></button>
+  </nav>
+
+  <!-- sheets -->
+  <div class="sheet-bg" id="sheetBg" hidden></div>
+  <section class="sheet" id="chatSheet" hidden>
+    <div class="sheet-grip"></div>
+    <header><h3>Messages</h3><button class="close" data-close-sheet>Close</button></header>
+    <div class="chat-log" id="chatLog"></div>
+    <form class="chat-form" id="chatForm"><input id="chatInput" placeholder="Write a message" maxlength="500" autocomplete="off"><button>Send</button></form>
+  </section>
+  <section class="sheet" id="adminSheet" hidden>
+    <div class="sheet-grip"></div>
+    <header><h3>Admin controls</h3><button class="close" data-close-sheet>Close</button></header>
+    <div class="admin-actions">
+      <button class="a-btn primary" id="aStart">Start the service</button>
+      <button class="a-btn" id="aMuteAll">Mute everyone</button>
+      <button class="a-btn" id="aTvOff">Turn TV off</button>
+      <button class="a-btn" id="aMinOff">Hide minister banner</button>
+      <button class="a-btn danger" id="aEnd">End service for everyone</button>
+    </div>
+    <p class="hint">Tap anyone in the call to mute them or show them as the minister.</p>
+  </section>
+  <section class="sheet" id="personSheet" hidden>
+    <div class="sheet-grip"></div>
+    <header><h3 id="psName">Person</h3><button class="close" data-close-sheet>Close</button></header>
+    <div class="admin-actions">
+      <button class="a-btn" id="psMute">Mute their mic</button>
+      <button class="a-btn" id="psSpot">Show as minister</button>
+    </div>
+  </section>
+</section>
+
+<!-- ============ ENDED ============ -->
+<section class="screen" id="scrEnd" hidden>
+  <div class="join-wrap end">
+    <img class="join-logo" src="logo.png" alt="">
+    <h2 id="endTitle">The service has ended</h2>
+    <p id="endText">God bless you. See you at the next service.</p>
+    <button class="btn-join" id="rejoin">Back to sign in</button>
+  </div>
+</section>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<div id="audioSink" hidden></div>
+
+<script src="livekit-client.umd.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

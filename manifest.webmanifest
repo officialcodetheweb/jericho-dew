@@ -1,0 +1,16 @@
+{
+  "name": "JERICHO DEW",
+  "short_name": "JERICHO DEW",
+  "description": "Voice services of Jericho Afasuo Prayer City",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#061024",
+  "theme_color": "#0a1d52",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
