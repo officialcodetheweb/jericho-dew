@@ -326,7 +326,7 @@
   }
   const amAdmin = () => me && isAdminRole(me.role);
   const adminPresent = () => !!room && [...room.remoteParticipants.values()].some((p) => isAdminRole(pInfo(p).role));
-  const isLive = () => state.live || adminPresent() || amAdmin();
+  const isLive = () => !!(svc && svc.openRoom) || state.live || adminPresent() || amAdmin();
 
   async function startCall(ticket, silent) {
     me = ticket;
@@ -387,6 +387,11 @@
       .on(E.TrackUnpublished, () => render())
       .on(E.LocalTrackPublished, () => { micUi(); render(); })
       .on(E.LocalTrackUnpublished, () => { micUi(); render(); })
+      .on(E.ParticipantPermissionsChanged, (_prev, p) => {
+        if (p !== r.localParticipant || !me || me.role === 'guest') return;
+        const can = !!(p.permissions && p.permissions.canPublish);
+        me.blocked = !can; muteBanner(); micUi(); updateLive();
+      })
       .on(E.AudioPlaybackStatusChanged, () => { $('#audioBanner').hidden = r.canPlaybackAudio; })
       .on(E.DataReceived, (payload, from, _k, topic) => {
         if (topic !== 'jd') return;
@@ -443,6 +448,23 @@
       toast(m.allow ? 'The admin has let you speak. Tap the mic to talk.' : 'Speaking has been turned off for you.', 'warn');
       if (!m.allow) setMic(false);
     }
+    if (m.t === 'soft-mute' && m.to === me.identity) {
+      // Only the listener (the church PC or the admin) can still hear this phone.
+      me.softMuted = !!m.on;
+      if (room) room.localParticipant.setTrackSubscriptionPermissions(!m.on, m.on ? [{ participantIdentity: m.listener || from.identity, allowAll: true }] : []);
+      muteBanner();
+      if (!m.on) toast('Everyone can hear you again.');
+      return;
+    }
+    if (m.t === 'blocked' && m.to === me.identity) {
+      me.blocked = !!m.on; muteBanner(); micUi();
+      if (!m.on) toast('The admin gave your mic back. Tap the mic when you want to speak.', 'warn');
+      return;
+    }
+    if (m.t === 'end' && m.open) {
+      state.ended = true; if (room) room.disconnect();
+      return ended('This session has ended', 'The service stays open — tap Join again any time to come back in.');
+    }
     if (m.t === 'end') { state.ended = true; if (room) room.disconnect(); ended(); }
   }
 
@@ -458,6 +480,13 @@
     const hostHere = [...room.remoteParticipants.values()].some((p) => pInfo(p).role === 'host');
     if (!hostHere) send(state);
   }, 8000);
+
+  function muteBanner() {
+    const b = $('#muteBanner');
+    if (me && me.blocked) { b.className = 'banner mute full'; $('#muteBannerText').textContent = 'The admin has muted you completely. Nobody can hear you until the admin gives your mic back.'; b.hidden = false; }
+    else if (me && me.softMuted) { b.className = 'banner mute'; $('#muteBannerText').textContent = 'The admin muted you for the members. Only the admin can hear you right now.'; b.hidden = false; }
+    else b.hidden = true;
+  }
 
   /* ---------------- mic ---------------- */
   async function setMic(on) {
@@ -476,6 +505,11 @@
   }
   function micUi() {
     const on = micOn();
+    if (me && me.blocked) {
+      const b = $('#dMic'); b.classList.remove('on'); b.classList.add('off'); b.disabled = true;
+      $('#micLbl').textContent = 'Mic off by admin';
+      return;
+    }
     if (me && me.role === 'guest' && !me.canSpeak) {
       const b = $('#dMic'); b.classList.remove('on'); b.classList.add('off'); b.disabled = true;
       $('#micLbl').textContent = 'Listening';
@@ -551,6 +585,7 @@
     personTarget = p;
     $('#psName').textContent = p.name;
     $('#psMute').hidden = !pMic(p);
+    $('#psSoft').textContent = p._soft ? 'Unmute for members' : 'Mute for members (only I hear them)';
     openSheet('#personSheet');
   });
 
@@ -561,7 +596,7 @@
     $('#scrCall').classList.toggle('is-live', live);
     setState(live ? 'Live now' : 'Waiting to start');
     $('#waitBanner').hidden = live;
-    $('#dMic').disabled = !live || (me && me.role === 'guest' && !me.canSpeak);
+    $('#dMic').disabled = !live || (me && (me.blocked || (me.role === 'guest' && !me.canSpeak)));
     $('#aStart').hidden = !amAdmin() || state.live;
   }
 
@@ -661,6 +696,14 @@
     setTimeout(() => { if (room) room.disconnect(); ended(); }, 400);
   };
   $('#psMute').onclick = () => { if (personTarget) { send({ t: 'mute', to: personTarget.identity, by: me.name }, [personTarget.identity]); toast(`${personTarget.name} has been muted.`); if (DEMO) personTarget.mic = false; render(); } closeSheets(); };
+  $('#psSoft').onclick = () => {
+    if (personTarget) {
+      personTarget._soft = !personTarget._soft;
+      send({ t: 'soft-mute', to: personTarget.identity, on: personTarget._soft, listener: me.identity, by: me.name }, [personTarget.identity]);
+      toast(personTarget._soft ? `Only you can hear ${personTarget.name} now.` : `Everyone can hear ${personTarget.name} again.`);
+    }
+    closeSheets();
+  };
   $('#psSpot').onclick = () => {
     if (personTarget) { const i = pInfo(personTarget); pushState({ minister: { identity: personTarget.identity, name: personTarget.name, title: i.title, photo: i.photo } }); }
     closeSheets();

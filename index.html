@@ -92,6 +92,7 @@
     </div>
 
     <div class="banner" id="audioBanner" hidden><span>Sound is paused by your browser.</span><button id="audioOn">Tap to hear</button></div>
+    <div class="banner mute" id="muteBanner" hidden><span id="muteBannerText"></span></div>
     <div class="banner wait" id="waitBanner" hidden><span class="pulse"></span><span id="waitText">Waiting for an admin to start the service. You will hear everyone once it starts.</span></div>
 
     <div class="grid" id="grid"></div>
@@ -131,6 +132,7 @@
     <header><h3 id="psName">Person</h3><button class="close" data-close-sheet>Close</button></header>
     <div class="admin-actions">
       <button class="a-btn" id="psMute">Mute their mic</button>
+      <button class="a-btn" id="psSoft">Mute for members (only I hear them)</button>
       <button class="a-btn" id="psSpot">Show as minister</button>
     </div>
   </section>

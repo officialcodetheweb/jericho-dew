@@ -265,3 +265,6 @@ input { font: inherit; color: var(--text); }
 .me-card .lj-photo { width: 64px; height: 64px; border-radius: 14px; border-width: 3px; font-size: 22px; flex: none; }
 .me-card b { display: block; font-size: 17px; }
 .me-card span { color: var(--muted); font-size: 13px; }
+
+.banner.mute { border-color: rgba(251,161,0,.5); background: rgba(251,161,0,.12); color: #ffd28a; }
+.banner.mute.full { border-color: rgba(239,75,93,.5); background: rgba(239,75,93,.12); color: #ffb0b9; }
