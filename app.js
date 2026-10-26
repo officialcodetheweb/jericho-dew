@@ -165,7 +165,6 @@
       adaptiveStream: true, dynacast: true,
       audioCaptureDefaults: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       publishDefaults: { dtx: true, red: true },
-      reconnectPolicy: undefined,
     });
     bindRoom(room);
     try {
@@ -178,12 +177,19 @@
       room = null;
       return;
     }
+    setTimeout(() => { if (room && room.state === 'connected') rejoinTries = 0; }, 20000);
     setupMediaSession();
     send({ t: 'hello' });
     if (svc.joinMuted === false && isLive()) setMic(true);
     render(); updateLive();
     if (!room.canPlaybackAudio) $('#audioBanner').hidden = false;
     if (!silent) toast(`Welcome, ${me.name.split(' ')[0]}`);
+  }
+
+  let rejoinTries = 0;
+  function reasonName(r) {
+    try { const D = LK.DisconnectReason; for (const k of Object.keys(D)) if (D[k] === r && isNaN(+k)) return k; } catch {}
+    return r === undefined ? '' : String(r);
   }
 
   function bindRoom(r) {
@@ -214,7 +220,22 @@
         if (reason === LK.DisconnectReason.ROOM_DELETED || state.ended) return ended();
         if (reason === LK.DisconnectReason.PARTICIPANT_REMOVED) return ended('You were removed from the call', 'Contact your admin if this was a mistake.');
         if (reason === LK.DisconnectReason.DUPLICATE_IDENTITY) return ended('You joined from another device', 'This phone has been disconnected because your account joined somewhere else.');
-        if (!left) { toast('Connection lost. Rejoining…', 'warn'); setTimeout(() => startCall(me, true), 1500); }
+        if (left) return;
+        const why = reasonName(reason);
+        if (why === 'JOIN_FAILURE' || why === 'STATE_MISMATCH' || why === 'SIGNAL_CLOSE' || why === 'UNKNOWN_REASON' || why === 'CLIENT_INITIATED' || why === 'SERVER_SHUTDOWN' || why === 'MIGRATION' || why === '') {
+          rejoinTries++;
+          if (rejoinTries > 4) {
+            show('#scrJoin');
+            $('#jErr').textContent = `The call keeps dropping (${why || 'network'}). Try switching between Wi-Fi and mobile data, then join again.`;
+            rejoinTries = 0;
+            return;
+          }
+          setState('Reconnecting…');
+          toast(`Connection lost. Rejoining… (${rejoinTries}/4)`, 'warn');
+          setTimeout(() => startCall(me, true), 1500 * rejoinTries);
+        } else {
+          ended('You were disconnected', `Reason: ${why}. Tap below to join again.`);
+        }
       });
   }
 

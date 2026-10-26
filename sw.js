@@ -1,6 +1,6 @@
 // JERICHO DEW service worker: makes the call site installable and opens fast.
 // Service data (data/…) always comes fresh from the network.
-const CACHE = 'jd-shell-v1';
+const CACHE = 'jd-shell-v2';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'livekit-client.umd.js', 'logo.png', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'fonts/lexend-latin-400-normal.woff2', 'fonts/lexend-latin-500-normal.woff2', 'fonts/lexend-latin-600-normal.woff2'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())); });
