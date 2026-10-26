@@ -1,14 +1,5 @@
 {
   "church": "Jericho Afasuo Prayer City",
-  "updatedAt": 1793040568342,
-  "services": [
-    {
-      "id": "2026-10-26-7fd513",
-      "title": "EMBER MONTH",
-      "date": "2026-10-26",
-      "time": "18:00",
-      "startsAt": 1793080800000,
-      "expiresAt": 1793340000000
-    }
-  ]
+  "updatedAt": 1793047177249,
+  "services": []
 }
