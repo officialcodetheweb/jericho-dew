@@ -236,3 +236,23 @@ input { font: inherit; color: var(--text); }
   .p .mic { top: 48px; }
   .d-btn { min-width: 48px; }
 }
+
+/* ---------- personal link & guests ---------- */
+.link-joining { position: fixed; inset: 0; z-index: 30; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; background: var(--bg); font-size: 18px; font-weight: 500; }
+.link-joining .pulse { width: 18px; height: 18px; }
+.guest { width: 100%; display: grid; gap: 12px; }
+.or { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 13px; }
+.or::before, .or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.btn-guest { height: 52px; border-radius: 16px; border: 1px solid var(--line); background: rgba(255,255,255,.05); font-weight: 500; font-size: 16px; }
+.guest-form { display: grid; gap: 12px; }
+.guest-form label { display: grid; gap: 6px; }
+.guest-form label > span { font-size: 13px; color: var(--muted); }
+.guest-form input { width: 100%; height: 52px; padding: 0 16px; border-radius: 14px; border: 1px solid var(--line); background: rgba(4,12,32,.55); outline: none; font-size: 16px; }
+.p .rl.guest { color: var(--muted); }
+
+/* ---------- reminders ---------- */
+.remind { display: grid; gap: 8px; margin-top: 12px; justify-items: center; }
+.countdown { font-size: 13px; color: var(--muted); }
+.countdown b { color: var(--text); }
+.btn-remind { display: inline-flex; align-items: center; justify-content: center; padding: 9px 16px; border-radius: 12px; border: 1px solid var(--line); background: rgba(255,255,255,.06); font-size: 14px; color: var(--text); text-decoration: none; font-weight: 500; }
+.remind-opts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }

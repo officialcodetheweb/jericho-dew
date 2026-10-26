@@ -20,6 +20,7 @@
 <!-- ============ SIGN IN ============ -->
 <section class="screen" id="scrJoin">
   <div class="join-wrap">
+    <div class="link-joining" id="linkJoining" hidden><span class="pulse"></span><span id="linkJoiningText">Opening the service…</span></div>
     <img class="join-logo" src="logo.png" alt="Jericho Afasuo Prayer City">
     <h1 class="join-brand">JERICHO <span>DEW</span></h1>
     <div class="svc-card" id="svcCard">
@@ -27,6 +28,15 @@
       <h2 id="svcTitle"></h2>
       <p class="svc-note" id="svcNote"></p>
       <div class="svc-pick" id="svcPick" hidden></div>
+      <div class="remind" id="remindBox" hidden>
+        <span class="countdown" id="countdown"></span>
+        <button type="button" class="btn-remind" id="remindBtn">🔔 Remind me</button>
+        <div class="remind-opts" id="remindOpts" hidden>
+          <a class="btn-remind" id="remindGoogle" target="_blank" rel="noopener">Google Calendar</a>
+          <button type="button" class="btn-remind" id="remindIcs">Phone calendar</button>
+          <button type="button" class="btn-remind" id="remindNotify">Alert on this page</button>
+        </div>
+      </div>
     </div>
     <form class="join-form" id="joinForm" autocomplete="on">
       <label><span>Username</span><input id="jUser" autocomplete="username" autocapitalize="none" spellcheck="false" required></label>
@@ -35,6 +45,15 @@
       <p class="err" id="jErr" role="alert"></p>
       <button class="btn-join" id="jBtn" type="submit">Join the service</button>
     </form>
+    <div class="guest" id="guestBox" hidden>
+      <div class="or"><span>or</span></div>
+      <button class="btn-guest" id="guestBtn" type="button">Listen as a guest</button>
+      <form class="guest-form" id="guestForm" hidden>
+        <label><span>Your name</span><input id="guestName" maxlength="30" autocomplete="name" placeholder="e.g. Ama"></label>
+        <button class="btn-join" type="submit" id="guestGo">Join as a guest</button>
+        <p class="err" id="guestErr"></p>
+      </form>
+    </div>
     <button class="install" id="installBtn" hidden>Install JERICHO DEW on this phone</button>
     <p class="ios-hint" id="iosHint" hidden>To install: tap <b>Share</b> then <b>Add to Home Screen</b>.</p>
   </div>

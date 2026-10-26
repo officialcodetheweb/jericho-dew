@@ -7,7 +7,7 @@
   const q = new URLSearchParams(location.search);
   const h = new URLSearchParams(location.hash.slice(1));
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const initials = (n) => String(n || '?').trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
+  const initials = (n) => (String(n || '?').replace(/\(.*?\)/g, '').match(/[\p{L}\d]+/gu) || ['?']).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
   const b64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
   const b64url = (s) => b64(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4));
   const dec = new TextDecoder();

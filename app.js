@@ -3,15 +3,21 @@
 (() => {
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const initials = (n) => String(n || '?').trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
+  const initials = (n) => (String(n || '?').replace(/\(.*?\)/g, '').match(/[\p{L}\d]+/gu) || ['?']).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
   const isAdminRole = (r) => r === 'host' || /^admin\d+$/.test(r || '');
-  const roleLabel = (r) => (r === 'host' ? 'Main admin' : /^admin(\d+)$/.test(r || '') ? `Admin-${r.slice(5)}` : '');
+  const roleLabel = (r) => (r === 'host' ? 'Main admin' : r === 'guest' ? 'Guest' : /^admin(\d+)$/.test(r || '') ? `Admin-${r.slice(5)}` : '');
   const LK = window.LivekitClient;
   const encT = new TextEncoder();
   const decT = new TextDecoder();
   const params = new URLSearchParams(location.search);
   const DEMO = params.has('demo');
 
+  // Personal join link: …/#join=<id>.<key>  (the key never leaves the phone)
+  (() => {
+    const m = /(?:^|[#&])join=([\w-]+)\.([\w-]+)/.exec(location.hash);
+    if (m) { try { localStorage.setItem('jd-link', JSON.stringify({ id: m[1], key: m[2] })); } catch {} }
+  })();
+  const loadLink = () => { try { return JSON.parse(localStorage.getItem('jd-link') || 'null'); } catch { return null; } };
   let svc = null;          // service document
   let me = null;           // { identity, name, role, photo, title }
   let room = null;
@@ -39,6 +45,11 @@
     const key = await crypto.subtle.deriveKey(
       { name: 'PBKDF2', salt: b64(sealed.salt), iterations: (svc.kdf && svc.kdf.iterations) || 120000, hash: 'SHA-256' },
       base, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+    const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64(sealed.iv) }, key, b64(sealed.ct));
+    return JSON.parse(decT.decode(pt));
+  }
+  async function openRaw(sealed, keyText) {
+    const key = await crypto.subtle.importKey('raw', b64url(keyText), 'AES-GCM', false, ['decrypt']);
     const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64(sealed.iv) }, key, b64(sealed.ct));
     return JSON.parse(decT.decode(pt));
   }
@@ -81,6 +92,23 @@
       $('#svcNote').textContent = svc.description || svc.church || '';
       $('#jBtn').disabled = false;
       document.title = `${svc.title} · JERICHO DEW`;
+      $('#guestBox').hidden = !svc.guestDoor;
+      setUpcoming(svc); scheduleNotify();
+      // Personal link: join straight away, no typing.
+      const link = loadLink();
+      if (link) {
+        const sealed = svc.links && svc.links[link.id];
+        if (sealed) {
+          $('#linkJoining').hidden = false;
+          try {
+            const ticket = await openRaw(sealed, link.key);
+            $('#linkJoining').hidden = true;
+            return startCall(ticket, true);
+          } catch {}
+          $('#linkJoining').hidden = true;
+        }
+        $('#jErr').textContent = 'Your join link has changed. Ask your admin to send you the new link, or sign in below.';
+      }
       // Signed in earlier on this phone? Join straight away.
       const saved = loadSaved();
       if (saved) return startCall(saved, true);
@@ -151,6 +179,109 @@
       $('#jErr').textContent = 'That username or password is not right. Check this week\'s login card from your admin.';
     } finally { $('#jBtn').disabled = false; $('#jBtn').textContent = 'Join the service'; }
   };
+
+  /* ---------------- reminders ---------------- */
+  let upcoming = null; // { title, startsAt, church }
+  const startOf = (x) => x.startsAt || new Date(`${x.date}T${x.time || '00:00'}:00`).getTime();
+  function setUpcoming(x) {
+    upcoming = x ? { title: x.title, startsAt: startOf(x), church: x.church || (svc && svc.church) || '' } : null;
+    $('#remindBox').hidden = !upcoming || upcoming.startsAt < Date.now() - 60000;
+    tickCountdown();
+  }
+  function tickCountdown() {
+    if (!upcoming) return;
+    const ms = upcoming.startsAt - Date.now();
+    if (ms <= 0) { $('#countdown').innerHTML = '<b>Starting now</b>'; return; }
+    const d = Math.floor(ms / 864e5), h = Math.floor((ms % 864e5) / 36e5), m = Math.floor((ms % 36e5) / 6e4);
+    $('#countdown').innerHTML = `Starts in <b>${d ? `${d} day${d > 1 ? 's' : ''} ` : ''}${h ? `${h} hr ` : ''}${m} min</b>`;
+  }
+  setInterval(tickCountdown, 30000);
+  const icsDate = (ms) => new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+  $('#remindBtn').onclick = () => {
+    $('#remindOpts').hidden = false; $('#remindBtn').hidden = true;
+    const link = location.origin + location.pathname;
+    const end = upcoming.startsAt + 2 * 36e5;
+    $('#remindGoogle').href = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(upcoming.title)}&dates=${icsDate(upcoming.startsAt)}/${icsDate(end)}&details=${encodeURIComponent(`Join on JERICHO DEW: ${link}`)}`;
+  };
+  $('#remindIcs').onclick = () => {
+    const link = location.origin + location.pathname;
+    const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//JERICHO DEW//EN', 'BEGIN:VEVENT',
+      `UID:${upcoming.startsAt}-jericho-dew`, `DTSTAMP:${icsDate(Date.now())}`, `DTSTART:${icsDate(upcoming.startsAt)}`, `DTEND:${icsDate(upcoming.startsAt + 2 * 36e5)}`,
+      `SUMMARY:${upcoming.title}`, `DESCRIPTION:Join on JERICHO DEW: ${link}`, `URL:${link}`,
+      'BEGIN:VALARM', 'TRIGGER:-PT15M', 'ACTION:DISPLAY', `DESCRIPTION:${upcoming.title} starts in 15 minutes`, 'END:VALARM',
+      'END:VEVENT', 'END:VCALENDAR'].join('\r\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([ics], { type: 'text/calendar' }));
+    a.download = 'jericho-dew-service.ics'; a.click();
+  };
+  $('#remindNotify').onclick = async () => {
+    if (!('Notification' in window)) return toast('This phone cannot show page alerts. Use a calendar reminder instead.', 'warn');
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') return toast('Alerts are blocked. Use a calendar reminder instead.', 'warn');
+    try { localStorage.setItem('jd-notify', '1'); } catch {}
+    scheduleNotify();
+    toast('We will alert you 15 minutes before and when it starts, as long as this page or app stays open.');
+  };
+  let notifyTimers = [];
+  function scheduleNotify() {
+    notifyTimers.forEach(clearTimeout); notifyTimers = [];
+    let on = false; try { on = localStorage.getItem('jd-notify') === '1'; } catch {}
+    if (!on || !upcoming || !('Notification' in window) || Notification.permission !== 'granted') return;
+    const fire = (title, body) => {
+      const opts = { body, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', tag: 'jd-service' };
+      if (navigator.serviceWorker && navigator.serviceWorker.ready) navigator.serviceWorker.ready.then((r) => r.showNotification(title, opts)).catch(() => new Notification(title, opts));
+      else new Notification(title, opts);
+    };
+    const t15 = upcoming.startsAt - 15 * 6e4 - Date.now();
+    const t0 = upcoming.startsAt - Date.now();
+    if (t15 > 0) notifyTimers.push(setTimeout(() => fire(upcoming.title, 'Starts in 15 minutes. Tap to join.'), t15));
+    if (t0 > 0) notifyTimers.push(setTimeout(() => fire(upcoming.title, 'The service is starting now. Tap to join.'), t0));
+  }
+
+  /* ---------------- guests: ring the "door", the church PC hands back a listen-only pass ---------------- */
+  $('#guestBtn').onclick = () => { $('#guestForm').hidden = false; $('#guestBtn').hidden = true; $('#guestName').focus(); };
+  try { $('#guestName').value = localStorage.getItem('jd-guest') || ''; } catch {}
+  $('#guestForm').onsubmit = async (e) => {
+    e.preventDefault();
+    const name = $('#guestName').value.trim();
+    if (!name) { $('#guestErr').textContent = 'Type your name so the church knows who is listening.'; return; }
+    try { localStorage.setItem('jd-guest', name); } catch {}
+    $('#guestGo').disabled = true; $('#guestGo').textContent = 'Asking to join…'; $('#guestErr').textContent = '';
+    try {
+      const ticket = await ringDoor(name);
+      await startCall({ ...ticket, role: 'guest', photo: '' });
+    } catch (err) {
+      $('#guestErr').textContent = err.message;
+    } finally { $('#guestGo').disabled = false; $('#guestGo').textContent = 'Join as a guest'; }
+  };
+  async function ringDoor(name, attempt = 1) {
+    const door = new LK.Room({ adaptiveStream: false, dynacast: false });
+    const nonce = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    try {
+      await door.connect(svc.livekitUrl, svc.guestDoor, { autoSubscribe: false });
+    } catch { throw new Error('Could not reach the call. Check your internet and try again.'); }
+    try {
+      return await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('The church PC is not live yet. Guests can join once the service starts.')), 9000);
+        door.on(LK.RoomEvent.DataReceived, (payload, _p, _k, topic) => {
+          if (topic !== 'jd') return;
+          let m; try { m = JSON.parse(decT.decode(payload)); } catch { return; }
+          if (m.nonce !== nonce) return;
+          clearTimeout(timer);
+          if (m.t === 'guest-ok') resolve({ token: m.token, identity: m.identity, name: m.name });
+          else reject(new Error(m.reason || 'Guests cannot join right now.'));
+        });
+        door.on(LK.RoomEvent.Disconnected, (reason) => {
+          if (reason === LK.DisconnectReason.DUPLICATE_IDENTITY) { clearTimeout(timer); reject(new Error('busy')); }
+        });
+        const ask = () => door.localParticipant.publishData(encT.encode(JSON.stringify({ t: 'guest-req', nonce, name })), { reliable: true, topic: 'jd' }).catch(() => {});
+        ask(); setTimeout(ask, 3000);
+      });
+    } catch (err) {
+      if (err.message === 'busy' && attempt < 4) { await new Promise((r) => setTimeout(r, 400 + Math.random() * 1200)); return ringDoor(name, attempt + 1); }
+      throw err;
+    } finally { try { door.disconnect(); } catch {} }
+  }
 
   /* ---------------- install as app ---------------- */
   let deferredPrompt = null;
@@ -266,6 +397,7 @@
     if (m.t === 'chat') return addChat(from ? from.name : 'Admin', m.text, false);
     if (m.t === 'hand') { m.up ? hands.add(from.identity) : hands.delete(from.identity); return render(); }
     if (m.t === 'hello') { if (amAdmin() && state.v) send(state, [from.identity]); return; }
+    if (m.t === 'guest-req' || m.t === 'guest-ok' || m.t === 'guest-no') return;
     if (!isAdminRole(info.role)) return; // only admins can control the room
     if (m.t === 'state' && m.v >= state.v) {
       const prevTv = state.tv && state.tv.on;
@@ -278,6 +410,11 @@
         setMic(false);
         toast('An admin muted your microphone. Tap the mic when you want to speak.', 'warn');
       }
+    }
+    if (m.t === 'can-speak' && m.to === me.identity) {
+      me.canSpeak = !!m.allow; micUi();
+      toast(m.allow ? 'The admin has let you speak. Tap the mic to talk.' : 'Speaking has been turned off for you.', 'warn');
+      if (!m.allow) setMic(false);
     }
     if (m.t === 'end') { state.ended = true; if (room) room.disconnect(); ended(); }
   }
@@ -312,6 +449,11 @@
   }
   function micUi() {
     const on = micOn();
+    if (me && me.role === 'guest' && !me.canSpeak) {
+      const b = $('#dMic'); b.classList.remove('on'); b.classList.add('off'); b.disabled = true;
+      $('#micLbl').textContent = 'Listening';
+      return;
+    }
     const b = $('#dMic');
     b.classList.toggle('on', on); b.classList.toggle('off', !on);
     $('#micLbl').textContent = on ? 'Mic on' : 'Tap to talk';
@@ -392,7 +534,7 @@
     $('#scrCall').classList.toggle('is-live', live);
     setState(live ? 'Live now' : 'Waiting to start');
     $('#waitBanner').hidden = live;
-    $('#dMic').disabled = !live;
+    $('#dMic').disabled = !live || (me && me.role === 'guest' && !me.canSpeak);
     $('#aStart').hidden = !amAdmin() || state.live;
   }
 
