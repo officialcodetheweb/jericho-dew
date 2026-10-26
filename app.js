@@ -58,41 +58,59 @@
     let id = params.get('s');
     if (DEMO) return demoService();
     try {
-      if (!id) {
-        const idx = await getJson('data/index.json');
-        const list = idx.services || [];
-        if (!list.length) { $('#svcWhen').textContent = 'No service is scheduled right now.'; $('#svcTitle').textContent = 'Check back soon'; $('#jBtn').disabled = true; return; }
-        const todayStr = new Date().toISOString().slice(0, 10);
-        const todays = list.filter((s) => s.date === todayStr);
-        if (list.length > 1 && todays.length !== 1) {
-          $('#svcWhen').textContent = 'Choose a service';
-          $('#svcTitle').textContent = '';
-          $('#svcPick').hidden = false;
-          $('#svcPick').innerHTML = list.map((s) => `<button data-id="${esc(s.id)}"><b>${esc(s.title)}</b><span>${esc(fmtWhen(s.date, s.time))}</span></button>`).join('');
-          $('#svcPick').onclick = (e) => { const b = e.target.closest('[data-id]'); if (b) { history.replaceState(null, '', `?s=${b.dataset.id}`); location.reload(); } };
-          $('#jBtn').disabled = true;
-          return;
-        }
-        id = (todays[0] || list[0]).id;
-        history.replaceState(null, '', `?s=${encodeURIComponent(id)}`);
+      if (id) {
+        // An old service link: use it if it is still open, otherwise fall through to the church link.
+        try {
+          svc = await getJson(`data/services/${encodeURIComponent(id)}.json`);
+          if (svc.expiresAt && Date.now() > svc.expiresAt) svc = null;
+        } catch { svc = null; }
+        if (!svc) history.replaceState(null, '', location.pathname);
       }
-      svc = await getJson(`data/services/${encodeURIComponent(id)}.json`);
+      if (!svc) {
+        // The church link: always opens the current (or next) service by itself.
+        const idx = await getJson('data/index.json');
+        const now = Date.now();
+        const list = (idx.services || []).filter((x) => !x.expiresAt || x.expiresAt > now)
+          .sort((a, b) => (a.startsAt || 0) - (b.startsAt || 0) || String(a.date + a.time).localeCompare(String(b.date + b.time)));
+        if (!list.length) return noService(idx.church);
+        svc = await getJson(`data/services/${encodeURIComponent(list[0].id)}.json`);
+      }
+      $('#svcPick').hidden = true;
       $('#svcWhen').textContent = fmtWhen(svc.date, svc.time);
       $('#svcTitle').textContent = svc.title;
       $('#svcNote').textContent = svc.description || svc.church || '';
+      $('#jBtn').disabled = false;
       document.title = `${svc.title} · JERICHO DEW`;
-      if (svc.expiresAt && Date.now() > svc.expiresAt) {
-        $('#svcNote').textContent = 'This join link has expired. Ask your admin for the new link.';
-        $('#jBtn').disabled = true;
-      }
-      // signed in earlier on this phone?
+      // Signed in earlier on this phone? Join straight away.
       const saved = loadSaved();
-      if (saved) startCall(saved, true);
+      if (saved) return startCall(saved, true);
+      const cred = loadCred();
+      if (cred) {
+        const ticket = await unlock(cred.u, cred.p).catch(() => null);
+        if (ticket) { save(ticket); return startCall(ticket, true); }
+        forgetCred();
+        $('#jUser').value = cred.u;
+        $('#jErr').textContent = 'Your password has changed for this week. Use the new login card from your admin.';
+      }
     } catch (e) {
-      $('#svcWhen').textContent = e.message === 'not-found' ? 'This service link was not found.' : 'Could not load the service. Check your internet and try again.';
+      $('#svcWhen').textContent = 'Could not load the service. Check your internet — this page will try again by itself.';
       $('#svcTitle').textContent = '';
       $('#jBtn').disabled = true;
+      setTimeout(loadService, 20000);
     }
+  }
+  function noService(church) {
+    $('#svcWhen').textContent = 'No service is open right now';
+    $('#svcTitle').textContent = church || 'Jericho Afasuo Prayer City';
+    $('#svcNote').textContent = 'Keep this page open or come back later. The next service will appear here by itself.';
+    $('#jBtn').disabled = true;
+    setTimeout(loadService, 60000);
+  }
+  async function unlock(user, pass) {
+    const tid = (await sha256hex(`${svc.id}:${String(user).trim().toLowerCase()}`)).slice(0, 40);
+    const sealed = svc.tickets[tid];
+    if (!sealed) throw new Error('bad');
+    return openSealed(sealed, pass);
   }
   function loadSaved() {
     try {
@@ -108,6 +126,10 @@
     } catch {}
   }
   function forget() { try { localStorage.removeItem(`jd-ticket-${svc.id}`); } catch {} }
+  // "Keep me signed in": remembered on this phone only, so every new service opens by itself.
+  function loadCred() { try { const c = JSON.parse(localStorage.getItem('jd-cred') || 'null'); return c ? { u: c.u, p: decodeURIComponent(escape(atob(c.p))) } : null; } catch { return null; } }
+  function saveCred(u, p) { try { localStorage.setItem('jd-cred', JSON.stringify({ u, p: btoa(unescape(encodeURIComponent(p))) })); } catch {} }
+  function forgetCred() { try { localStorage.removeItem('jd-cred'); } catch {} }
 
   /* ---------------- sign in ---------------- */
   $('#pwEye').onclick = () => { const p = $('#jPass'); p.type = p.type === 'password' ? 'text' : 'password'; $('#pwEye').textContent = p.type === 'password' ? 'Show' : 'Hide'; };
@@ -121,15 +143,12 @@
     const pass = $('#jPass').value;
     $('#jBtn').disabled = true; $('#jBtn').textContent = 'Checking…';
     try {
-      const tid = (await sha256hex(`${svc.id}:${user}`)).slice(0, 40);
-      const sealed = svc.tickets[tid];
-      if (!sealed) throw new Error('bad');
-      const ticket = await openSealed(sealed, pass);
-      if ($('#jRemember').checked) save(ticket);
+      const ticket = await unlock(user, pass);
+      if ($('#jRemember').checked) { save(ticket); saveCred(user, pass); } else forgetCred();
       $('#jPass').value = '';
       await startCall(ticket);
     } catch {
-      $('#jErr').textContent = 'That username or password is not right for this service. Check the details your admin sent you.';
+      $('#jErr').textContent = 'That username or password is not right. Check this week\'s login card from your admin.';
     } finally { $('#jBtn').disabled = false; $('#jBtn').textContent = 'Join the service'; }
   };
 
@@ -493,7 +512,8 @@
     $('#endText').textContent = text || 'God bless you. See you at the next service.';
     if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'none';
   }
-  $('#rejoin').onclick = () => location.reload();
+  $('#rejoin').onclick = () => { location.href = location.pathname; };
+  $('#signOut').onclick = () => { forgetCred(); try { Object.keys(localStorage).filter((k) => k.startsWith('jd-ticket-')).forEach((k) => localStorage.removeItem(k)); } catch {} location.href = location.pathname; };
   window.addEventListener('pagehide', () => { if (room && left) room.disconnect(); });
 
   /* ---------------- demo (preview without a server): add ?demo to the link ---------------- */
