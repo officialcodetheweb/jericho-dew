@@ -18,6 +18,12 @@
     if (m) { try { localStorage.setItem('jd-link', JSON.stringify({ id: m[1], key: m[2] })); } catch {} }
   })();
   const loadLink = () => { try { return JSON.parse(localStorage.getItem('jd-link') || 'null'); } catch { return null; } };
+  const loadMe = () => { try { return JSON.parse(localStorage.getItem('jd-me') || 'null'); } catch { return null; } };
+  const saveMe = (t) => { try { localStorage.setItem('jd-me', JSON.stringify({ name: t.name, photo: t.photo || '' })); } catch {} };
+  function paintPhoto(el, who) {
+    el.style.backgroundImage = who && who.photo ? `url('${who.photo}')` : '';
+    el.textContent = who && who.photo ? '' : initials(who && who.name);
+  }
   let svc = null;          // service document
   let me = null;           // { identity, name, role, photo, title }
   let room = null;
@@ -87,6 +93,8 @@
         svc = await getJson(`data/services/${encodeURIComponent(list[0].id)}.json`);
       }
       $('#svcPick').hidden = true;
+      $('#joinForm').hidden = false;
+      const mc = document.getElementById('meCard'); if (mc) mc.remove();
       $('#svcWhen').textContent = fmtWhen(svc.date, svc.time);
       $('#svcTitle').textContent = svc.title;
       $('#svcNote').textContent = svc.description || svc.church || '';
@@ -99,13 +107,17 @@
       if (link) {
         const sealed = svc.links && svc.links[link.id];
         if (sealed) {
-          $('#linkJoining').hidden = false;
           try {
             const ticket = await openRaw(sealed, link.key);
+            saveMe(ticket);
+            paintPhoto($('#ljPhoto'), ticket);
+            $('#ljHi').textContent = `Welcome, ${String(ticket.name).split(' ')[0]}`;
+            $('#linkJoiningText').textContent = `Joining ${svc.title}…`;
+            $('#linkJoining').hidden = false;
+            await new Promise((r) => setTimeout(r, 900));
             $('#linkJoining').hidden = true;
             return startCall(ticket, true);
-          } catch {}
-          $('#linkJoining').hidden = true;
+          } catch { $('#linkJoining').hidden = true; }
         }
         $('#jErr').textContent = 'Your join link has changed. Ask your admin to send you the new link, or sign in below.';
       }
@@ -128,11 +140,25 @@
     }
   }
   function noService(church) {
+    const me = loadMe();
+    const known = loadLink() || loadCred();
     $('#svcWhen').textContent = 'No service is open right now';
-    $('#svcTitle').textContent = church || 'Jericho Afasuo Prayer City';
-    $('#svcNote').textContent = 'Keep this page open or come back later. The next service will appear here by itself.';
+    $('#svcTitle').textContent = me && known ? `Hello, ${String(me.name).split(' ')[0]}` : (church || 'Jericho Afasuo Prayer City');
+    $('#svcNote').textContent = known
+      ? 'Your link is saved on this phone. Keep this page open — you will be joined automatically when the next service starts.'
+      : 'Keep this page open or come back later. The next service will appear here by itself.';
     $('#jBtn').disabled = true;
-    setTimeout(loadService, 60000);
+    if (known) { $('#joinForm').hidden = true; $('#guestBox').hidden = true; showMeCard(me); }
+    setTimeout(loadService, known ? 30000 : 60000);
+  }
+  function showMeCard(me) {
+    if (!me || document.getElementById('meCard')) return;
+    const d = document.createElement('div');
+    d.className = 'me-card'; d.id = 'meCard';
+    d.innerHTML = `<div class="lj-photo"></div><div><b></b><span>This phone joins as you</span></div>`;
+    paintPhoto(d.firstElementChild, me);
+    d.querySelector('b').textContent = me.name;
+    $('#svcCard').after(d);
   }
   async function unlock(user, pass) {
     const tid = (await sha256hex(`${svc.id}:${String(user).trim().toLowerCase()}`)).slice(0, 40);
@@ -304,6 +330,7 @@
 
   async function startCall(ticket, silent) {
     me = ticket;
+    if (ticket.role !== 'guest') saveMe(ticket);
     show('#scrCall');
     $('#cTitle').textContent = svc ? svc.title : 'Service';
     $('#dAdmin').hidden = !amAdmin();
@@ -648,11 +675,24 @@
     forget();
     ended('You left the service', 'Tap below to join again.');
   };
+  let endWatch = null;
   function ended(title, text) {
     show('#scrEnd');
     $('#endTitle').textContent = title || 'The service has ended';
     $('#endText').textContent = text || 'God bless you. See you at the next service.';
     if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'none';
+    // Ended by the admin? If this phone has a saved link/login, rejoin by itself when a service opens again.
+    if (!title && !left && (loadLink() || loadCred()) && !endWatch) {
+      const since = Date.now();
+      $('#endText').textContent += ' If the service opens again, this phone will join by itself.';
+      endWatch = setInterval(async () => {
+        try {
+          const idx = await getJson('data/index.json');
+          const open = (idx.services || []).some((x) => !x.expiresAt || x.expiresAt > Date.now());
+          if (open && idx.updatedAt && idx.updatedAt > since) { clearInterval(endWatch); location.href = location.pathname; }
+        } catch {}
+      }, 30000);
+    }
   }
   $('#rejoin').onclick = () => { location.href = location.pathname; };
   $('#signOut').onclick = () => { forgetCred(); try { Object.keys(localStorage).filter((k) => k.startsWith('jd-ticket-')).forEach((k) => localStorage.removeItem(k)); } catch {} location.href = location.pathname; };
