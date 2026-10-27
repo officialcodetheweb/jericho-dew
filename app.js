@@ -346,6 +346,7 @@
       publishDefaults: { dtx: true, red: true },
     });
     bindRoom(room);
+    loadConfig().then(() => registerPush(false)).catch(() => {});
     try { room.registerByteStreamHandler(FILE_TOPIC, receiveFile); } catch {}
     try {
       await room.connect(svc.livekitUrl, ticket.token, { autoSubscribe: true });
@@ -377,8 +378,8 @@
 
   function bindRoom(r) {
     const E = LK.RoomEvent;
-    r.on(E.ParticipantConnected, () => { render(); updateLive(); })
-      .on(E.ParticipantDisconnected, (p) => { hands.delete(p.identity); render(); updateLive(); })
+    r.on(E.ParticipantConnected, (p) => { if (p.identity === 'host-pc') { registerPush(false); send({ t: 'roster-req' }); } render(); updateLive(); renderRing(); })
+      .on(E.ParticipantDisconnected, (p) => { hands.delete(p.identity); render(); updateLive(); renderRing(); })
       .on(E.TrackSubscribed, (track, pub, p) => {
         if (track.kind === 'audio') { const el = track.attach(); $('#audioSink').appendChild(el); }
         if (track.kind === 'video' && pub.trackName === 'jd-tv') {
@@ -439,6 +440,14 @@
     if (m.t === 'hello') { if (amAdmin() && state.v) send(state, [from.identity]); return; }
     if (m.t === 'guest-req' || m.t === 'guest-ok' || m.t === 'guest-no') return;
     if (!isAdminRole(info.role)) return; // only admins can control the room
+    if (m.t === 'roster') {
+      if (!Array.isArray(m.list)) return;
+      if (!m.i) rosterBuf = [];
+      rosterBuf = rosterBuf.concat(m.list.map((x) => ({ id: String(x.id), n: String(x.n || ''), p: String(x.p || ''), r: String(x.r || 'member') })));
+      if (m.i === (m.n || 1) - 1) { roster = rosterBuf; renderRing(); }
+      return;
+    }
+    if (m.t === 'ring-result' && m.to) return onRingResult(m);
     if (m.t === 'admin-chat') { if (amAdmin()) addAdminChat(from ? from.name : 'Admin', m.text, false); return; }
     if (m.t === 'queue') {
       // The church PC keeps the speaking queue; every phone follows it.
@@ -650,7 +659,7 @@
     if (pub && pub.setSubscribed) { try { pub.setSubscribed(!on); } catch {} }
     if (!on && pub && pub.track) { try { pub.track.attach($('#tvVideo')); applyTvQuality(); } catch {} }
     $('#bwBtn').classList.toggle('on', on);
-    $('#bwBtn').textContent = on ? 'TV paused' : 'Audio only';
+    $('#bwBtn').title = on ? 'TV paused. Tap to bring the picture back.' : 'Audio only: pause the TV picture to save data';
     updateTv();
     if (!quiet) toast(on ? 'Audio only: the TV picture is paused to save your data.' : 'TV picture is back on.');
   }
@@ -824,6 +833,81 @@
   };
   $('#dChat').onclick = () => { unread = 0; $('#chatBadge').hidden = $('#adminBadge').hidden; $('#chatTabs').hidden = !amAdmin(); if (!amAdmin()) setChatTab('all'); openSheet('#chatSheet'); };
 
+  /* ---- call people who have not joined ("Jericho is calling you") ---- */
+  let roster = [], rosterBuf = [], vapidKey = '';
+  const ringing = new Map(); // id -> time we rang
+  async function loadConfig() { try { vapidKey = (await getJson('config.json')).vapidPublicKey || ''; } catch {} }
+  const canPush = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window && location.protocol === 'https:';
+  const keyBytes = (b) => Uint8Array.from(atob(b.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((b.length + 3) % 4)), (c) => c.charCodeAt(0));
+  // Leaves this phone's push address with the church PC so others can ring it. Guests cannot be rung.
+  async function registerPush(ask) {
+    try {
+      if (!canPush() || !vapidKey || !room || !me || me.role === 'guest') return false;
+      if (Notification.permission === 'default' && ask) await Notification.requestPermission();
+      if (Notification.permission !== 'granted') return false;
+      const reg = await navigator.serviceWorker.ready;
+      const sub = (await reg.pushManager.getSubscription()) || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(vapidKey) });
+      send({ t: 'push-sub', sub: sub.toJSON() }, ['host-pc']);
+      return true;
+    } catch { return false; }
+  }
+  const pcHere = () => !!room && room.remoteParticipants.has('host-pc');
+  function renderRing() {
+    if ($('#ringSheet').hidden || !room || !me) return;
+    const here = new Set([me.identity, ...room.remoteParticipants.keys()]);
+    const q = $('#ringSearch').value.trim().toLowerCase();
+    const all = roster.filter((x) => !here.has(x.id));
+    const list = all.filter((x) => !q || x.n.toLowerCase().includes(q));
+    $('#ringHint').textContent = !roster.length ? (pcHere() ? 'Loading the list…' : 'The list appears when the church PC is in the call.') : all.length ? `${all.length} not in the call yet. Tap the bell to ring their phone.` : 'Everyone is already in the call.';
+    $('#ringAlert').hidden = !(canPush() && vapidKey && Notification.permission !== 'granted' && me.role !== 'guest');
+    $('#ringList').innerHTML = list.map((x) => {
+      const busy = ringing.has(x.id) && Date.now() - ringing.get(x.id) < 90000;
+      return `<div class="ring-row"><div class="rav" ${x.p ? `style="background-image:url('photos/${esc(x.p)}.jpg')"` : ''}>${x.p ? '' : esc(initials(x.n))}</div>
+        <div class="rn"><b>${esc(x.n)}</b>${roleLabel(x.r) ? `<span>${esc(roleLabel(x.r))}</span>` : ''}</div>
+        <button class="ring-b ${busy ? 'going' : ''}" data-id="${esc(x.id)}" ${busy ? 'disabled' : ''} aria-label="Ring ${esc(x.n)}"><svg viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 8 3 8H3s3-1 3-8M10.3 20a1.9 1.9 0 0 0 3.4 0"/></svg></button></div>`;
+    }).join('');
+  }
+  $('#ringBtn').onclick = () => { openSheet('#ringSheet'); if (!roster.length) send({ t: 'roster-req' }); renderRing(); };
+  $('#ringSearch').oninput = renderRing;
+  $('#ringEnable').onclick = async () => { const ok = await registerPush(true); toast(ok ? 'Call alerts are on for this phone.' : 'Alerts are blocked. Allow notifications for this site in your browser settings.', ok ? '' : 'warn'); renderRing(); };
+  $('#ringList').addEventListener('click', (e) => {
+    const b = e.target.closest('.ring-b'); if (!b || b.disabled) return;
+    if (!pcHere()) return toast('The church PC is not in the call yet, so it cannot ring anyone.', 'warn');
+    const id = b.dataset.id;
+    ringing.set(id, Date.now());
+    send({ t: 'ring', to: id }, ['host-pc']);
+    renderRing(); setTimeout(renderRing, 90500);
+  });
+  function onRingResult(m) {
+    const who = (roster.find((x) => x.id === m.to) || {}).n || 'They';
+    if (m.ok) toast(`Calling ${who}…`);
+    else {
+      ringing.delete(m.to);
+      toast({ 'no-device': `${who} has not turned on call alerts on their phone yet.`, here: `${who} is already in the call.`, 'slow-down': 'You are ringing too fast. Please wait a moment.', recent: `${who} was just rung. Give them a minute.` }[m.reason] || `${who} could not be rung right now.`, 'warn');
+    }
+    renderRing();
+  }
+  /* The ringing screen shown on a phone that gets the call */
+  let ringTimer = null, ringCtx = null;
+  function stopRinging() { clearInterval(ringTimer); ringTimer = null; try { navigator.vibrate && navigator.vibrate(0); } catch {} try { ringCtx && ringCtx.close(); } catch {} ringCtx = null; $('#ringing').hidden = true; }
+  function startRinging() {
+    if (room && room.state === 'connected') return;             // already in the call
+    if (!$('#ringing').hidden) return;
+    $('#ringing').hidden = false;
+    const beep = () => {
+      try {
+        ringCtx = ringCtx || new (window.AudioContext || window.webkitAudioContext)();
+        [0, .35].forEach((d) => { const o = ringCtx.createOscillator(), g = ringCtx.createGain(); o.frequency.value = d ? 880 : 660; g.gain.value = .25; o.connect(g); g.connect(ringCtx.destination); o.start(ringCtx.currentTime + d); o.stop(ringCtx.currentTime + d + .3); });
+      } catch {}
+      try { navigator.vibrate && navigator.vibrate([400, 150, 400]); } catch {}
+    };
+    beep(); ringTimer = setInterval(beep, 2000);
+    setTimeout(stopRinging, 30000);
+  }
+  if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', (e) => { if (e.data && e.data.t === 'ring') startRinging(); });
+  $('#ringDismiss').onclick = stopRinging;
+  $('#ringJoin').onclick = () => { stopRinging(); location.href = location.pathname; };
+
   /* ---- prayer requests: private to the admins ---- */
   let lastPrayer = 0;
   $('#dPray').onclick = () => openSheet('#praySheet');
@@ -851,7 +935,7 @@
 
   /* ---------------- sheets ---------------- */
   function openSheet(id) { closeSheets(); $('#sheetBg').hidden = false; $(id).hidden = false; }
-  function closeSheets() { ['#chatSheet', '#adminSheet', '#personSheet', '#praySheet'].forEach((s) => ($(s).hidden = true)); $('#sheetBg').hidden = true; }
+  function closeSheets() { ['#chatSheet', '#adminSheet', '#personSheet', '#praySheet', '#ringSheet'].forEach((s) => ($(s).hidden = true)); $('#sheetBg').hidden = true; }
   $('#sheetBg').onclick = closeSheets;
   document.querySelectorAll('[data-close-sheet]').forEach((b) => (b.onclick = closeSheets));
 

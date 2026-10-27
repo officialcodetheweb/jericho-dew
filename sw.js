@@ -1,6 +1,6 @@
 // JERICHO DEW service worker: makes the call site installable and opens fast.
 // Service data (data/…) always comes fresh from the network.
-const CACHE = 'jd-shell-v7';
+const CACHE = 'jd-shell-v8';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'livekit-client.umd.js', 'logo.png', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'fonts/lexend-latin-400-normal.woff2', 'fonts/lexend-latin-500-normal.woff2', 'fonts/lexend-latin-600-normal.woff2'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())); });
@@ -25,4 +25,16 @@ self.addEventListener('notificationclick', (e) => {
     for (const c of list) if ('focus' in c) return c.focus();
     return self.clients.openWindow('./');
   }));
+});
+
+// "JERICHO is calling you": a small push from the church PC rings this phone.
+self.addEventListener('push', (e) => {
+  e.waitUntil((async () => {
+    await self.registration.showNotification('JERICHO is calling you', {
+      body: 'The service is on. Tap to join now.', icon: 'icons/icon-192.png', badge: 'icons/icon-192.png',
+      tag: 'jd-ring', renotify: true, requireInteraction: true, vibrate: [500, 200, 500, 200, 500, 200, 500], data: { ring: true },
+    });
+    const list = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    list.forEach((c) => c.postMessage({ t: 'ring' }));
+  })());
 });
