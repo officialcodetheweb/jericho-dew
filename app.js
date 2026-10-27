@@ -29,6 +29,7 @@
   let room = null;
   let state = { v: 0, live: false, tv: { on: false }, minister: null, chat: true };
   const hands = new Set();
+  let queueIds = [];
   let unread = 0;
   let personTarget = null;
 
@@ -380,12 +381,16 @@
       .on(E.ParticipantDisconnected, (p) => { hands.delete(p.identity); render(); updateLive(); })
       .on(E.TrackSubscribed, (track, pub, p) => {
         if (track.kind === 'audio') { const el = track.attach(); $('#audioSink').appendChild(el); }
-        if (track.kind === 'video' && pub.trackName === 'jd-tv') { track.attach($('#tvVideo')); applyTvQuality(); updateTv(); }
+        if (track.kind === 'video' && pub.trackName === 'jd-tv') {
+          if (audioOnly) { try { pub.setSubscribed(false); } catch {} return; }
+          track.attach($('#tvVideo')); applyTvQuality(); updateTv();
+        }
       })
       .on(E.TrackUnsubscribed, (track, pub) => { track.detach().forEach((el) => { if (el.id !== 'tvVideo') el.remove(); }); if (pub.trackName === 'jd-tv') updateTv(); })
       .on(E.TrackMuted, (pub, p) => { if (pub.trackName === 'jd-tv') updateTv(); if (p === r.localParticipant && pub.source === LK.Track.Source.Microphone) micUi(); render(); })
       .on(E.TrackUnmuted, (pub) => { if (pub.trackName === 'jd-tv') updateTv(); render(); micUi(); })
-      .on(E.TrackPublished, () => render())
+      .on(E.TrackPublished, (pub) => { if (pub && pub.trackName === 'jd-tv' && audioOnly) { try { pub.setSubscribed(false); } catch {} } render(); })
+      .on(E.ConnectionQualityChanged, (q, p) => { if (p === r.localParticipant) showQuality(q); })
       .on(E.TrackUnpublished, () => render())
       .on(E.LocalTrackPublished, () => { micUi(); render(); })
       .on(E.LocalTrackUnpublished, () => { micUi(); render(); })
@@ -400,8 +405,8 @@
         let m; try { m = JSON.parse(decT.decode(payload)); } catch { return; }
         onData(m, from);
       })
-      .on(E.Reconnecting, () => setState('Reconnecting…'))
-      .on(E.Reconnected, () => { updateLive(); send({ t: 'hello' }); })
+      .on(E.Reconnecting, () => { setState('Reconnecting…'); showQuality('lost'); })
+      .on(E.Reconnected, () => { updateLive(); send({ t: 'hello' }); showQuality('good'); })
       .on(E.Disconnected, (reason) => {
         room = null;
         if (reason === LK.DisconnectReason.ROOM_DELETED || state.ended) return ended();
@@ -430,9 +435,26 @@
     const info = from ? pInfo(from) : { role: 'member' };
     if (m.t === 'chat') return addChat(from ? from.name : 'Admin', m.text, false);
     if (m.t === 'hand') { m.up ? hands.add(from.identity) : hands.delete(from.identity); return render(); }
+    if (m.t === 'prayer') return amAdmin() ? onPrayer(m, from) : undefined; // sent privately to admins only
     if (m.t === 'hello') { if (amAdmin() && state.v) send(state, [from.identity]); return; }
     if (m.t === 'guest-req' || m.t === 'guest-ok' || m.t === 'guest-no') return;
     if (!isAdminRole(info.role)) return; // only admins can control the room
+    if (m.t === 'admin-chat') { if (amAdmin()) addAdminChat(from ? from.name : 'Admin', m.text, false); return; }
+    if (m.t === 'queue') {
+      // The church PC keeps the speaking queue; every phone follows it.
+      const ids = Array.isArray(m.ids) ? m.ids.map(String).slice(0, 200) : [];
+      queueIds = ids; hands.clear(); ids.forEach((i) => hands.add(i));
+      const mine = ids.indexOf(me.identity);
+      $('#dHand').classList.toggle('on', mine >= 0);
+      $('#dHand').querySelector('span').textContent = mine >= 0 ? `Hand · #${mine + 1}` : 'Hand';
+      return render();
+    }
+    if (m.t === 'your-turn' && m.to === me.identity) {
+      toast('It is your turn to speak. Tap the mic when you are ready.', 'warn');
+      try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch {}
+      hands.delete(me.identity); $('#dHand').classList.remove('on'); $('#dHand').querySelector('span').textContent = 'Hand'; return render();
+    }
+    if (m.t === 'hand-down' && m.to === me.identity) { hands.delete(me.identity); $('#dHand').classList.remove('on'); $('#dHand').querySelector('span').textContent = 'Hand'; return render(); }
     if (m.t === 'state' && m.v >= state.v) {
       const prevTv = state.tv && state.tv.on;
       state = { ...state, ...m };
@@ -615,8 +637,46 @@
   function updateTv() {
     const pub = tvTrackPub();
     const has = DEMO ? state.tv.on : !!(pub && pub.track && !pub.isMuted);
-    $('#tvSlot').hidden = !(state.tv && state.tv.on && has);
+    $('#tvSlot').hidden = audioOnly || !(state.tv && state.tv.on && has);
+    $('#tvPaused').hidden = !(audioOnly && state.tv && state.tv.on);
   }
+  /* ---- low data: audio only (TV picture is not downloaded at all) ---- */
+  let audioOnly = false;
+  try { audioOnly = localStorage.getItem('jd-audio-only') === '1'; } catch {}
+  function setAudioOnly(on, quiet) {
+    audioOnly = !!on;
+    try { localStorage.setItem('jd-audio-only', on ? '1' : '0'); } catch {}
+    const pub = tvTrackPub();
+    if (pub && pub.setSubscribed) { try { pub.setSubscribed(!on); } catch {} }
+    if (!on && pub && pub.track) { try { pub.track.attach($('#tvVideo')); applyTvQuality(); } catch {} }
+    $('#bwBtn').classList.toggle('on', on);
+    $('#bwBtn').textContent = on ? 'TV paused' : 'Audio only';
+    updateTv();
+    if (!quiet) toast(on ? 'Audio only: the TV picture is paused to save your data.' : 'TV picture is back on.');
+  }
+  $('#bwBtn').onclick = () => setAudioOnly(!audioOnly);
+  $('#tvResume').onclick = () => setAudioOnly(false);
+  $('#weakAudio').onclick = () => { setAudioOnly(true); $('#weakBanner').hidden = true; };
+  let poorCount = 0;
+  function showQuality(q) {
+    const name = typeof q === 'string' ? q : (q && String(q).toLowerCase()) || 'good';
+    $('#cQual').dataset.q = name;
+    if (name === 'poor' || name === 'lost') {
+      poorCount++;
+      if (poorCount >= 2) {
+        $('#weakText').textContent = name === 'lost' ? 'Your connection dropped. Trying to get back in…' : 'Your connection is weak. Sound may break up.';
+        $('#weakAudio').hidden = audioOnly;
+        $('#weakBanner').hidden = false;
+      }
+    } else { poorCount = 0; $('#weakBanner').hidden = true; }
+  }
+  window.addEventListener('offline', () => { $('#netBanner').hidden = false; showQuality('lost'); });
+  window.addEventListener('online', () => {
+    $('#netBanner').hidden = true;
+    if (me && !room && !left && !$('#scrCall').hidden) startCall(me, true);
+    else if (room) { try { room.startAudio(); } catch {} }
+  });
+  setAudioOnly(audioOnly, true);
   // HD by default. "Data saver" lets people on weak mobile data ask for a lighter copy.
   let tvHd = true;
   try { tvHd = localStorage.getItem('jd-tv-hd') !== '0'; } catch {}
@@ -732,21 +792,71 @@
       addChatFile('', f, f, true);
     } catch { toast('The file could not be sent. Try again.', 'warn'); }
   };
+  /* ---- admins-only channel ---- */
+  let chatTab = 'all';
+  const adminIds = () => (room ? [...room.remoteParticipants.values()].filter((p) => isAdminRole(pInfo(p).role)).map((p) => p.identity) : []);
+  function addAdminChat(name, text, mine) {
+    const d = document.createElement('div');
+    d.className = `msg adm ${mine ? 'me' : ''}`;
+    d.innerHTML = `<b>${esc(mine ? 'You' : name)}</b>${esc(String(text).slice(0, 500))}`;
+    const log = $('#adminLog'); log.appendChild(d); log.scrollTop = log.scrollHeight;
+    while (log.children.length > 200) log.firstChild.remove();
+    if (!mine && (chatTab !== 'admin' || $('#chatSheet').hidden)) { $('#adminBadge').hidden = false; $('#chatBadge').hidden = false; }
+  }
+  function setChatTab(t) {
+    chatTab = t;
+    document.querySelectorAll('#chatTabs [data-ct]').forEach((b) => b.classList.toggle('on', b.dataset.ct === t));
+    $('#chatLog').hidden = t !== 'all'; $('#adminLog').hidden = t !== 'admin';
+    $('#chatInput').placeholder = t === 'admin' ? 'Message the admins only' : 'Write a message';
+    $('.attach').hidden = t === 'admin';
+    if (t === 'admin') { $('#adminBadge').hidden = true; if (!unread) $('#chatBadge').hidden = true; }
+  }
+  document.querySelectorAll('#chatTabs [data-ct]').forEach((b) => (b.onclick = () => setChatTab(b.dataset.ct)));
   $('#chatForm').onsubmit = (e) => {
     e.preventDefault();
     const t = $('#chatInput').value.trim(); if (!t) return;
-    send({ t: 'chat', text: t }); addChat('', t, true); $('#chatInput').value = '';
+    if (chatTab === 'admin' && amAdmin()) {
+      const ids = adminIds();
+      if (ids.length) send({ t: 'admin-chat', text: t }, ids); else toast('No other admin is in the call right now.', 'warn');
+      addAdminChat('', t, true);
+    } else { send({ t: 'chat', text: t }); addChat('', t, true); }
+    $('#chatInput').value = '';
   };
-  $('#dChat').onclick = () => { unread = 0; $('#chatBadge').hidden = true; openSheet('#chatSheet'); };
+  $('#dChat').onclick = () => { unread = 0; $('#chatBadge').hidden = $('#adminBadge').hidden; $('#chatTabs').hidden = !amAdmin(); if (!amAdmin()) setChatTab('all'); openSheet('#chatSheet'); };
+
+  /* ---- prayer requests: private to the admins ---- */
+  let lastPrayer = 0;
+  $('#dPray').onclick = () => openSheet('#praySheet');
+  $('#prayForm').onsubmit = (e) => {
+    e.preventDefault();
+    const text = $('#prayText').value.trim(); if (!text) return;
+    if (Date.now() - lastPrayer < 20000) return toast('Please wait a moment before sending another.', 'warn');
+    const ids = adminIds();
+    // Never broadcast: with nobody to receive it, keep the request and tell the person.
+    if (!ids.length) return toast('No admin is in the call yet. Please try again once the service has started.', 'warn');
+    lastPrayer = Date.now();
+    send({ t: 'prayer', id: `${me.identity}-${lastPrayer}`, text: text.slice(0, 300), anon: $('#prayAnon').checked }, ids);
+    $('#prayText').value = ''; closeSheets();
+    toast('Your request was sent privately to the admins. God bless you.');
+  };
+  const prayers = [];
+  function onPrayer(m, from) {
+    if (prayers.some((x) => x.id === m.id)) return;
+    prayers.unshift({ id: String(m.id).slice(0, 80), who: m.anon ? 'Anonymous' : (from ? from.name : 'Member'), text: String(m.text || '').slice(0, 300) });
+    if (prayers.length > 60) prayers.pop();
+    $('#prBox').hidden = false; $('#prCount').textContent = `(${prayers.length})`;
+    $('#prList').innerHTML = prayers.map((x) => `<div class="pr-item"><b>${esc(x.who)}</b>${esc(x.text)}</div>`).join('');
+    $('#dAdmin').classList.add('has-new'); toast('New prayer request');
+  }
 
   /* ---------------- sheets ---------------- */
   function openSheet(id) { closeSheets(); $('#sheetBg').hidden = false; $(id).hidden = false; }
-  function closeSheets() { ['#chatSheet', '#adminSheet', '#personSheet'].forEach((s) => ($(s).hidden = true)); $('#sheetBg').hidden = true; }
+  function closeSheets() { ['#chatSheet', '#adminSheet', '#personSheet', '#praySheet'].forEach((s) => ($(s).hidden = true)); $('#sheetBg').hidden = true; }
   $('#sheetBg').onclick = closeSheets;
   document.querySelectorAll('[data-close-sheet]').forEach((b) => (b.onclick = closeSheets));
 
   /* ---------------- admin controls (Admin-1, Admin-2 …) ---------------- */
-  $('#dAdmin').onclick = () => { updateLive(); openSheet('#adminSheet'); };
+  $('#dAdmin').onclick = () => { updateLive(); $('#dAdmin').classList.remove('has-new'); openSheet('#adminSheet'); };
   $('#aStart').onclick = () => { pushState({ live: true }); closeSheets(); toast('The service has started.'); };
   $('#aMuteAll').onclick = () => { send({ t: 'mute', to: '*', by: me.name }); closeSheets(); toast('Everyone has been muted.'); if (DEMO) Demo.muteAll(); };
   $('#aTvOff').onclick = () => { pushState({ tv: { ...(state.tv || {}), on: false } }); closeSheets(); };

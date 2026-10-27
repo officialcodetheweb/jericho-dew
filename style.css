@@ -289,3 +289,35 @@ input { font: inherit; color: var(--text); }
 /* ---------- spotlight marker ---------- */
 .p.spot .ring { background: linear-gradient(135deg, #ffcc5c, var(--orange-deep)); }
 .p.spot .nm::before { content: "★ "; color: var(--orange); }
+
+/* ---------- connection quality / low data ---------- */
+.bw-btn { flex: none; padding: 5px 10px; border-radius: 99px; font-size: 11px; font-weight: 500; color: var(--muted); border: 1px solid var(--line); background: rgba(255,255,255,.05); }
+.bw-btn.on { color: #1c1000; background: var(--orange); border-color: var(--orange); }
+.cq { flex: none; display: inline-flex; align-items: flex-end; gap: 2px; height: 14px; }
+.cq i { width: 4px; border-radius: 1px; background: rgba(255,255,255,.2); }
+.cq i:nth-child(1) { height: 6px; } .cq i:nth-child(2) { height: 10px; } .cq i:nth-child(3) { height: 14px; }
+.cq[data-q="excellent"] i, .cq[data-q="good"] i:nth-child(-n+2) { background: var(--green); }
+.cq[data-q="good"] i:nth-child(3) { background: rgba(255,255,255,.2); }
+.cq[data-q="poor"] i:nth-child(1) { background: var(--orange); }
+.cq[data-q="lost"] i:nth-child(1) { background: var(--danger); }
+.banner.weak { border-color: rgba(251,161,0,.5); background: rgba(251,161,0,.12); color: #ffd28a; }
+.tv-paused { max-width: 760px; margin: 0 auto 14px; display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 14px; background: var(--surface); border: 1px dashed var(--line); font-size: 14px; color: var(--muted); }
+.tv-paused button { margin-left: auto; padding: 8px 14px; border-radius: 10px; background: var(--orange); color: #1c1000; font-weight: 600; }
+
+/* ---------- admin chat tabs, prayer ---------- */
+.chat-tabs { display: flex; gap: 6px; margin-bottom: 8px; }
+.chat-tabs button { position: relative; flex: 1; height: 38px; border-radius: 10px; font-size: 13px; font-weight: 500; color: var(--muted); background: var(--surface); border: 1px solid var(--line); }
+.chat-tabs button.on { color: #1c1000; background: var(--orange); border-color: var(--orange); }
+.chat-tabs .badge { position: absolute; top: 6px; right: 10px; width: 8px; height: 8px; border-radius: 50%; background: var(--danger); }
+.msg.adm b::after { content: " · admins"; color: var(--muted); font-weight: 400; }
+.pray-form { display: grid; gap: 12px; }
+.pray-form textarea { width: 100%; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line); background: rgba(4,12,32,.55); outline: none; font: inherit; font-size: 16px; resize: none; color: var(--text); }
+.pray-form textarea:focus { border-color: var(--blue-hi); }
+.pr-box { margin-top: 14px; }
+.pr-box h4 { margin: 0 0 8px; font-size: 14px; color: var(--orange); font-weight: 500; }
+.pr-list { display: grid; gap: 8px; max-height: 28dvh; overflow-y: auto; }
+.pr-item { padding: 10px 12px; border-radius: 12px; background: var(--surface); font-size: 14px; }
+.pr-item b { display: block; font-size: 12px; color: var(--orange); font-weight: 500; }
+.d-btn.has-new::after { content: ""; position: absolute; top: 4px; right: 10px; width: 9px; height: 9px; border-radius: 50%; background: var(--danger); }
+.d-btn.on .q { color: var(--orange); }
+@media (max-width: 400px) { .d-btn { min-width: 46px; } .dock { padding-left: 4px; padding-right: 4px; } .bw-btn { padding: 5px 8px; } }
