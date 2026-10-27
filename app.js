@@ -339,11 +339,13 @@
     if (DEMO) return Demo.start();
     setState('Connecting…');
     room = new LK.Room({
-      adaptiveStream: true, dynacast: true,
+      // The only video in the call is the TV screen. Do not let LiveKit shrink it to the tiny on-screen size.
+      adaptiveStream: false, dynacast: true,
       audioCaptureDefaults: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       publishDefaults: { dtx: true, red: true },
     });
     bindRoom(room);
+    try { room.registerByteStreamHandler(FILE_TOPIC, receiveFile); } catch {}
     try {
       await room.connect(svc.livekitUrl, ticket.token, { autoSubscribe: true });
     } catch (e) {
@@ -378,7 +380,7 @@
       .on(E.ParticipantDisconnected, (p) => { hands.delete(p.identity); render(); updateLive(); })
       .on(E.TrackSubscribed, (track, pub, p) => {
         if (track.kind === 'audio') { const el = track.attach(); $('#audioSink').appendChild(el); }
-        if (track.kind === 'video' && pub.trackName === 'jd-tv') { track.attach($('#tvVideo')); updateTv(); }
+        if (track.kind === 'video' && pub.trackName === 'jd-tv') { track.attach($('#tvVideo')); applyTvQuality(); updateTv(); }
       })
       .on(E.TrackUnsubscribed, (track, pub) => { track.detach().forEach((el) => { if (el.id !== 'tvVideo') el.remove(); }); if (pub.trackName === 'jd-tv') updateTv(); })
       .on(E.TrackMuted, (pub, p) => { if (pub.trackName === 'jd-tv') updateTv(); if (p === r.localParticipant && pub.source === LK.Track.Source.Microphone) micUi(); render(); })
@@ -548,7 +550,7 @@
         const mine = p.identity === me.identity;
         const photo = mine ? (me.photo || info.photo) : info.photo;
         const on = pMic(p);
-        return `<button class="p ${mine ? 'me' : ''}" data-id="${esc(p.identity)}" aria-label="${esc(p.name)}">
+        return `<button class="p ${mine ? 'me' : ''} ${state.minister && state.minister.identity === p.identity ? 'spot' : ''}" data-id="${esc(p.identity)}" aria-label="${esc(p.name)}">
           ${hands.has(p.identity) ? '<span class="hand">✋</span>' : ''}
           <div class="ring"><div class="av" ${photo ? `style="background-image:url('${esc(photo)}')"` : ''}>${photo ? '' : esc(initials(p.name || p.identity))}</div></div>
           <span class="mic ${on ? 'on' : 'off'}">${on ? '<svg viewBox="0 0 24 24"><path d="M12 4a2.5 2.5 0 0 0-2.5 2.5v5a2.5 2.5 0 0 0 5 0v-5A2.5 2.5 0 0 0 12 4zM6 11a6 6 0 0 0 12 0"/></svg>' : '<svg viewBox="0 0 24 24"><path d="M4 4l16 16M9.5 9.5v2a2.5 2.5 0 0 0 4.2 1.8M14.5 9V6.5a2.5 2.5 0 0 0-4.8-1M6 11a6 6 0 0 0 10 4.4"/></svg>'}</span>
@@ -586,6 +588,7 @@
     $('#psName').textContent = p.name;
     $('#psMute').hidden = !pMic(p);
     $('#psSoft').textContent = p._soft ? 'Unmute for members' : 'Mute for members (only I hear them)';
+    $('#psSpot').textContent = state.minister && state.minister.identity === p.identity ? 'Turn spotlight off' : 'Show as minister';
     openSheet('#personSheet');
   });
 
@@ -614,6 +617,21 @@
     const has = DEMO ? state.tv.on : !!(pub && pub.track && !pub.isMuted);
     $('#tvSlot').hidden = !(state.tv && state.tv.on && has);
   }
+  // HD by default. "Data saver" lets people on weak mobile data ask for a lighter copy.
+  let tvHd = true;
+  try { tvHd = localStorage.getItem('jd-tv-hd') !== '0'; } catch {}
+  function applyTvQuality() {
+    const pub = tvTrackPub();
+    if (pub && pub.setVideoQuality) { try { pub.setVideoQuality(tvHd ? LK.VideoQuality.HIGH : LK.VideoQuality.LOW); } catch {} }
+    const b = $('#tvQuality'); if (b) { b.textContent = tvHd ? 'HD' : 'Saver'; b.classList.toggle('saver', !tvHd); b.title = tvHd ? 'Sharp picture. Tap to save data.' : 'Data saver. Tap for the sharp picture.'; }
+  }
+  $('#tvQuality').addEventListener('click', (e) => {
+    e.stopPropagation();
+    tvHd = !tvHd; try { localStorage.setItem('jd-tv-hd', tvHd ? '1' : '0'); } catch {}
+    applyTvQuality();
+    toast(tvHd ? 'TV picture set to HD.' : 'Data saver on: the TV picture is lighter.');
+  });
+  applyTvQuality();
   function powerOnTv() {
     const tv = $('#tv');
     tv.classList.remove('powering'); void tv.offsetWidth; tv.classList.add('powering');
@@ -624,6 +642,7 @@
   /* ---------------- minister ---------------- */
   function updateMinister() {
     const m = state.minister;
+    render();
     $('#minister').hidden = !m;
     if (!m) return;
     $('#mName').textContent = m.name;
@@ -663,14 +682,56 @@
     render();
     if (up) toast('Your hand is raised. The admin can see it.');
   };
+  function pushChatEl(d, mine) {
+    const log = $('#chatLog'); log.appendChild(d); log.scrollTop = log.scrollHeight;
+    while (log.children.length > 200) { const f = log.firstChild; const u = f.dataset && f.dataset.url; if (u) URL.revokeObjectURL(u); f.remove(); }
+    if (!mine && $('#chatSheet').hidden) { unread++; $('#chatBadge').hidden = false; }
+  }
   function addChat(name, text, mine) {
     const d = document.createElement('div');
     d.className = `msg ${mine ? 'me' : ''}`;
     d.innerHTML = `<b>${esc(mine ? 'You' : name)}</b>${esc(String(text).slice(0, 500))}`;
-    const log = $('#chatLog'); log.appendChild(d); log.scrollTop = log.scrollHeight;
-    while (log.children.length > 200) log.firstChild.remove();
-    if (!mine && $('#chatSheet').hidden) { unread++; $('#chatBadge').hidden = false; }
+    pushChatEl(d, mine);
   }
+
+  /* ---- files in messages (photos, PDFs, documents) ---- */
+  const FILE_TOPIC = 'jd-file';
+  const MAX_FILE = 8 * 1024 * 1024; // 8 MB
+  const IMG_OK = /^image\/(png|jpe?g|gif|webp)$/i;
+  const fmtSize = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+  const safeFile = (n) => String(n || 'file').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_').slice(0, 80);
+  function addChatFile(name, file, blob, mine) {
+    const url = URL.createObjectURL(blob);
+    const isImg = IMG_OK.test(file.type || '');
+    const d = document.createElement('div');
+    d.className = `msg ${mine ? 'me' : ''} has-file`;
+    d.dataset.url = url;
+    d.innerHTML = `<b>${esc(mine ? 'You' : name)}</b>` + (isImg ? `<a href="${url}" target="_blank" rel="noopener"><img class="att-img" src="${url}" alt=""></a>` : '') +
+      `<a class="att" href="${url}" download="${esc(safeFile(file.name))}"><span class="att-ic">${isImg ? '🖼' : '📎'}</span><span class="att-t"><span class="att-n">${esc(safeFile(file.name))}</span><span class="att-s">${fmtSize(file.size)} · Tap to save</span></span></a>`;
+    pushChatEl(d, mine);
+  }
+  async function receiveFile(reader, info) {
+    const from = info && info.participantInfo ? info.participantInfo.identity : '';
+    if (from === (me && me.identity)) return;
+    const size = (info && info.size) || 0;
+    if (size > MAX_FILE) return;
+    let chunks;
+    try { chunks = await reader.readAll(); } catch { return; }
+    const blob = new Blob(chunks, { type: (info && info.mimeType) || 'application/octet-stream' });
+    if (blob.size > MAX_FILE) return;
+    const p = room && room.remoteParticipants.get(from);
+    addChatFile((p && p.name) || 'Someone', { name: info.name, size: blob.size, type: info.mimeType }, blob, false);
+  }
+  $('#chatFile').onchange = async (e) => {
+    const f = e.target.files && e.target.files[0]; e.target.value = '';
+    if (!f || !room) return;
+    if (f.size > MAX_FILE) return toast(`That file is too big. Please keep it under ${fmtSize(MAX_FILE)}.`, 'warn');
+    try {
+      toast('Sending file…');
+      await room.localParticipant.sendFile(f, { topic: FILE_TOPIC, mimeType: f.type || 'application/octet-stream' });
+      addChatFile('', f, f, true);
+    } catch { toast('The file could not be sent. Try again.', 'warn'); }
+  };
   $('#chatForm').onsubmit = (e) => {
     e.preventDefault();
     const t = $('#chatInput').value.trim(); if (!t) return;
@@ -705,7 +766,11 @@
     closeSheets();
   };
   $('#psSpot').onclick = () => {
-    if (personTarget) { const i = pInfo(personTarget); pushState({ minister: { identity: personTarget.identity, name: personTarget.name, title: i.title, photo: i.photo } }); }
+    if (personTarget) {
+      const already = state.minister && state.minister.identity === personTarget.identity;
+      if (already) { pushState({ minister: null }); toast('Spotlight is off.'); }
+      else { const i = pInfo(personTarget); pushState({ minister: { identity: personTarget.identity, name: personTarget.name, title: i.title, photo: i.photo } }); }
+    }
     closeSheets();
   };
 

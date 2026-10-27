@@ -21,26 +21,45 @@ body.transparent { background: transparent; }
 .live { margin-left: auto; display: flex; align-items: center; gap: 10px; padding: 10px 20px; border-radius: 99px; background: rgba(239,75,93,.95); font-weight: 600; font-size: 20px; letter-spacing: .08em; }
 .live i { width: 12px; height: 12px; border-radius: 50%; background: #fff; animation: p 1.4s infinite; }
 @keyframes p { 50% { opacity: .3; } }
-.stage { position: absolute; left: 48px; top: 140px; width: 1440px; height: 810px; border-radius: 22px; overflow: hidden; background: #000; box-shadow: 0 30px 70px -20px rgba(0,0,0,.8), 0 0 0 6px #11141b; display: none; }
-.stage video { width: 100%; height: 100%; object-fit: contain; }
-body.tv .stage { display: block; }
-.side { position: absolute; right: 48px; top: 140px; width: 360px; height: 810px; display: none; flex-direction: column; gap: 14px; }
-body.tv .side { display: flex; }
-.side h4 { margin: 0 0 4px; font-weight: 500; font-size: 20px; color: #fba100; }
-.spk { display: flex; align-items: center; gap: 14px; padding: 12px; border-radius: 18px; background: rgba(6,16,44,.75); }
-.spk .av, .big .av { border-radius: 50%; background: linear-gradient(135deg, #2a63f0, #1636a8) center/cover; display: grid; place-items: center; font-weight: 600; flex: none; }
-.spk .av { width: 64px; height: 64px; font-size: 22px; box-shadow: 0 0 0 3px #fba100; }
-.spk b { font-size: 22px; font-weight: 500; }
-.center { position: absolute; inset: 140px 48px 170px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 36px; }
-body.tv .center { display: none; }
-.center .logo { width: 300px; filter: drop-shadow(0 20px 50px rgba(0,0,0,.5)); }
-.bigrow { display: flex; gap: 40px; flex-wrap: wrap; justify-content: center; max-width: 1700px; }
-.big { display: grid; justify-items: center; gap: 12px; }
-.big .av { width: 150px; height: 150px; font-size: 48px; box-shadow: 0 0 0 6px #fba100, 0 0 40px rgba(251,161,0,.5); }
-.big b { font-size: 26px; font-weight: 500; }
+/* iPhone-style frame (left side). Only the TV picture lives in it; the people never sit behind it. */
+.phone { position: absolute; left: 48px; top: 150px; width: 1010px; padding: 20px 26px; border-radius: 74px; display: none;
+  background: linear-gradient(160deg, #3a3f4b, #14171e 45%, #262a33); box-shadow: 0 0 0 3px #07090d, inset 0 0 0 2px rgba(255,255,255,.16), inset 0 0 0 9px #0b0d12, 0 40px 80px -24px rgba(0,0,0,.85); }
+body.tv .phone { display: block; animation: ph .6s cubic-bezier(.2,.9,.3,1.1); }
+@keyframes ph { from { opacity: 0; transform: translateX(-60px) scale(.96); } }
+.phone .screen { position: relative; aspect-ratio: 16 / 9; border-radius: 46px; overflow: hidden; background: #000; }
+.phone video { width: 100%; height: 100%; object-fit: contain; display: block; background: #000; }
+.phone .island { position: absolute; left: 12px; top: 50%; width: 22px; height: 120px; margin-top: -60px; border-radius: 14px; background: #000; z-index: 2; box-shadow: inset 0 0 0 1px #15181f; }
+.phone .island::after { content: ""; position: absolute; left: 6px; top: 14px; width: 9px; height: 9px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #2b3a63, #0a0d16 70%); }
+.phone .btn { position: absolute; background: #1c2029; border-radius: 3px; }
+.phone .b1 { top: -5px; left: 210px; width: 70px; height: 5px; } .phone .b2 { top: -5px; left: 300px; width: 70px; height: 5px; } .phone .b3 { bottom: -5px; left: 150px; width: 110px; height: 5px; }
+.phone .glare { position: absolute; inset: 0; pointer-events: none; border-radius: 46px; background: linear-gradient(120deg, rgba(255,255,255,.08), rgba(255,255,255,0) 30%); }
+/* everyone in the call */
+.people { position: absolute; top: 140px; left: 48px; right: 48px; bottom: 60px; display: block; }
+body.tv .people { left: 1110px; }
+body.min .people { bottom: 190px; }
+body.tv.min .people { bottom: 60px; }
+.pgrid { height: 100%; display: flex; flex-wrap: wrap; align-content: center; justify-content: center; gap: 0; }
+.pt { width: var(--tw); height: var(--th); display: grid; justify-items: center; align-content: center; gap: calc(var(--sz) * .07); position: relative; min-width: 0; }
+.pt .ring { position: relative; width: var(--sz); height: var(--sz); border-radius: 50%; padding: calc(var(--sz) * .035); background: rgba(255,255,255,.16); transition: background .15s; }
+.pt .ring::after { content: ""; position: absolute; inset: calc(var(--sz) * -.06); border-radius: 50%; border: calc(var(--sz) * .035 + 1px) solid #fba100; opacity: 0; transform: scale(var(--s, 1)); transition: opacity .12s, transform .08s; }
+.pt.speaking .ring { background: linear-gradient(135deg, #ffcc5c, #ff7a00); }
+.pt.speaking .ring::after { opacity: .6; }
+.pt .av { width: 100%; height: 100%; border-radius: 50%; display: grid; place-items: center; font-weight: 600; font-size: calc(var(--sz) * .34); background: linear-gradient(135deg, #2a63f0, #1636a8) center/cover; box-shadow: 0 8px 24px -8px rgba(0,0,0,.7); }
+.pt .nm { font-size: max(13px, calc(var(--sz) * .17)); font-weight: 500; max-width: 96%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 2px 8px rgba(0,0,0,.7); }
+.pt .rl { font-size: max(12px, calc(var(--sz) * .13)); color: #fba100; font-weight: 500; margin-top: calc(var(--sz) * -.05); }
+.pt .mic { position: absolute; right: calc(var(--sz) * -.04); bottom: calc(var(--sz) * -.02); width: calc(var(--sz) * .3); height: calc(var(--sz) * .3); border-radius: 50%; display: grid; place-items: center; background: #0b2266; border: 2px solid #061233; color: #23c483; }
+.pt .mic svg { width: 56%; height: 56%; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.pt .mic.off { color: #ef4b5d; }
+.pt .hand { position: absolute; left: calc(var(--sz) * -.14); top: calc(var(--sz) * -.06); font-size: calc(var(--sz) * .3); animation: wv 1s ease-in-out infinite; }
+@keyframes wv { 50% { transform: rotate(16deg); } }
+.pt.spot .ring { background: linear-gradient(135deg, #ffe08a, #fba100); box-shadow: 0 0 0 4px rgba(251,161,0,.35), 0 0 40px rgba(251,161,0,.6); }
+.pt.spot .nm::before { content: "★ "; color: #fba100; }
+.waiting { position: absolute; inset: 140px 48px 60px; display: none; place-items: center; text-align: center; font-size: 30px; color: #c8d6f7; }
+body.empty .waiting { display: grid; }
+body.empty .people { display: none; }
 .lower { position: absolute; left: 48px; bottom: 44px; display: none; align-items: center; gap: 22px; padding: 18px 40px 18px 18px; border-radius: 24px; background: rgba(6,16,44,.9); border-left: 10px solid #fba100; box-shadow: 0 20px 50px -20px #000; animation: in .6s cubic-bezier(.2,.9,.3,1.1); z-index: 6; }
 body.min .lower { display: flex; }
-body.tv .lower { bottom: 150px; left: 80px; }
+body.tv .lower { left: 48px; bottom: 44px; }
 @keyframes in { from { opacity: 0; transform: translateX(-40px); } }
 .lower .av { width: 96px; height: 96px; border-radius: 50%; background: linear-gradient(135deg, #2a63f0, #1636a8) center/cover; display: grid; place-items: center; font-size: 34px; font-weight: 600; }
 .lower span { display: block; color: #fba100; font-size: 20px; font-weight: 500; }
@@ -51,9 +70,9 @@ body.tv .lower { bottom: 150px; left: 80px; }
 </head>
 <body>
 <div class="top"><img src="logo.png" alt=""><div class="t"><b id="title">JERICHO DEW</b><span id="church">Jericho Afasuo Prayer City</span></div><div class="live" id="live" hidden><i></i>LIVE</div></div>
-<div class="stage"><video id="tv" autoplay playsinline muted></video></div>
-<div class="side"><h4>Speaking now</h4><div id="sideList"></div></div>
-<div class="center" id="center"><img class="logo" src="logo.png" alt=""><div class="bigrow" id="bigRow"></div></div>
+<div class="phone"><i class="btn b1"></i><i class="btn b2"></i><i class="btn b3"></i><div class="screen"><i class="island"></i><video id="tv" autoplay playsinline muted></video><div class="glare"></div></div></div>
+<div class="people" id="people"><div class="pgrid" id="pgrid"></div></div>
+<div class="waiting" id="waiting">Waiting for people to join…</div>
 <div class="lower" id="lower"><div class="av" id="lAv"></div><div><span>Now ministering</span><b id="lName"></b><em id="lTitle"></em></div></div>
 <div class="msg" id="msg">Connecting to the service…</div>
 <div id="sink" hidden></div>
