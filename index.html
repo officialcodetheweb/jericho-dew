@@ -79,7 +79,7 @@
     <div class="tv-slot" id="tvSlot" hidden>
       <div class="tv" id="tv">
         <div class="tv-screen">
-          <video id="tvVideo" playsinline autoplay muted></video>
+          <img id="tvImg" alt="TV screen" decoding="async">
           <div class="tv-static"></div>
           <div class="tv-glass"></div>
         </div>
@@ -99,7 +99,7 @@
     <div class="banner weak" id="weakBanner" hidden><span id="weakText">Your connection is weak. Sound may break up.</span><button id="weakAudio">TV off</button></div>
     <div class="banner" id="audioBanner" hidden><span>Sound is paused by your browser.</span><button id="audioOn">Tap to hear</button></div>
     <div class="banner mute" id="muteBanner" hidden><span id="muteBannerText"></span></div>
-    <div class="banner wait" id="waitBanner" hidden><span class="pulse"></span><span id="waitText">Waiting for an admin to start the service. You will hear everyone once it starts.</span></div>
+    <div class="banner wait" id="waitBanner" hidden><span class="pulse"></span><span id="waitText">The service has not started yet. You will hear everyone as soon as it begins.</span></div>
 
     <div class="grid" id="grid"></div>
   </div>
@@ -187,7 +187,10 @@
 <div class="toasts" id="toasts" aria-live="polite"></div>
 <div id="audioSink" hidden></div>
 
-<script src="livekit-client.umd.js"></script>
+<audio id="callAudio" autoplay playsinline></audio>
+<script src="peerjs.min.js"></script>
+<script src="opus-decoder.min.js"></script>
+<script src="dewnet.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

@@ -6,7 +6,6 @@
   const initials = (n) => (String(n || '?').replace(/\(.*?\)/g, '').match(/[\p{L}\d]+/gu) || ['?']).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
   const isAdminRole = (r) => r === 'host' || /^admin\d+$/.test(r || '');
   const roleLabel = (r) => (r === 'host' ? 'Main admin' : r === 'guest' ? 'Guest' : /^admin(\d+)$/.test(r || '') ? `Admin-${r.slice(5)}` : '');
-  const LK = window.LivekitClient;
   const encT = new TextEncoder();
   const decT = new TextDecoder();
   const params = new URLSearchParams(location.search);
@@ -26,7 +25,8 @@
   }
   let svc = null;          // service document
   let me = null;           // { identity, name, role, photo, title }
-  let room = null;
+  let room = null;         // the call while connected (see makeRoom)
+  let net = null;          // the link to the church PC (dewnet.js)
   let state = { v: 0, live: false, tv: { on: false }, minister: null, chat: true };
   const hands = new Set();
   let queueIds = [];
@@ -101,7 +101,7 @@
       $('#svcNote').textContent = svc.description || svc.church || '';
       $('#jBtn').disabled = false;
       document.title = `${svc.title} · JERICHO DEW`;
-      $('#guestBox').hidden = !svc.guestDoor;
+      $('#guestBox').hidden = svc.allowGuests === false;
       setUpcoming(svc); scheduleNotify();
       // Personal link: join straight away, no typing.
       const link = loadLink();
@@ -265,7 +265,7 @@
     if (t0 > 0) notifyTimers.push(setTimeout(() => fire(upcoming.title, 'The service is starting now. Tap to join.'), t0));
   }
 
-  /* ---------------- guests: ring the "door", the church PC hands back a listen-only pass ---------------- */
+  /* ---------------- guests: type a name, the church PC lets them listen ---------------- */
   $('#guestBtn').onclick = () => { $('#guestForm').hidden = false; $('#guestBtn').hidden = true; $('#guestName').focus(); };
   try { $('#guestName').value = localStorage.getItem('jd-guest') || ''; } catch {}
   $('#guestForm').onsubmit = async (e) => {
@@ -273,42 +273,9 @@
     const name = $('#guestName').value.trim();
     if (!name) { $('#guestErr').textContent = 'Type your name so the church knows who is listening.'; return; }
     try { localStorage.setItem('jd-guest', name); } catch {}
-    $('#guestGo').disabled = true; $('#guestGo').textContent = 'Asking to join…'; $('#guestErr').textContent = '';
-    try {
-      const ticket = await ringDoor(name);
-      await startCall({ ...ticket, role: 'guest', photo: '' });
-    } catch (err) {
-      $('#guestErr').textContent = err.message;
-    } finally { $('#guestGo').disabled = false; $('#guestGo').textContent = 'Join as a guest'; }
+    $('#guestErr').textContent = '';
+    await startCall({ identity: '', name, role: 'guest', photo: '', guest: true });
   };
-  async function ringDoor(name, attempt = 1) {
-    const door = new LK.Room({ adaptiveStream: false, dynacast: false });
-    const nonce = Math.random().toString(36).slice(2) + Date.now().toString(36);
-    try {
-      await door.connect(svc.livekitUrl, svc.guestDoor, { autoSubscribe: false });
-    } catch { throw new Error('Could not reach the call. Check your internet and try again.'); }
-    try {
-      return await new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error('The church PC is not live yet. Guests can join once the service starts.')), 9000);
-        door.on(LK.RoomEvent.DataReceived, (payload, _p, _k, topic) => {
-          if (topic !== 'jd') return;
-          let m; try { m = JSON.parse(decT.decode(payload)); } catch { return; }
-          if (m.nonce !== nonce) return;
-          clearTimeout(timer);
-          if (m.t === 'guest-ok') resolve({ token: m.token, identity: m.identity, name: m.name });
-          else reject(new Error(m.reason || 'Guests cannot join right now.'));
-        });
-        door.on(LK.RoomEvent.Disconnected, (reason) => {
-          if (reason === LK.DisconnectReason.DUPLICATE_IDENTITY) { clearTimeout(timer); reject(new Error('busy')); }
-        });
-        const ask = () => door.localParticipant.publishData(encT.encode(JSON.stringify({ t: 'guest-req', nonce, name })), { reliable: true, topic: 'jd' }).catch(() => {});
-        ask(); setTimeout(ask, 3000);
-      });
-    } catch (err) {
-      if (err.message === 'busy' && attempt < 4) { await new Promise((r) => setTimeout(r, 400 + Math.random() * 1200)); return ringDoor(name, attempt + 1); }
-      throw err;
-    } finally { try { door.disconnect(); } catch {} }
-  }
 
   /* ---------------- install as app ---------------- */
   let deferredPrompt = null;
@@ -320,17 +287,24 @@
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
 
   /* ---------------- the call ---------------- */
-  function pInfo(p) {
-    let a = p.attributes || {};
-    if (!a.role && p.metadata) { try { a = { ...JSON.parse(p.metadata), ...a }; } catch {} }
-    return { role: a.role || 'member', title: a.title || '', photo: a.photo || '' };
+  // Everyone in the call, as this phone knows them. The church PC sends the list and keeps it up to date.
+  const pInfo = (p) => (p && p.attributes) || { role: 'member', title: '', photo: '' };
+  const mkPerson = (x) => ({ identity: x.id, name: x.n, mic: !!x.m, hand: !!x.h, audioLevel: 0, isSpeaking: false, attributes: { role: x.r || 'member', title: x.t || '', photo: x.p || '' } });
+  function makeRoom() {
+    return {
+      state: 'connected',
+      localParticipant: { identity: me.identity, name: me.name, attributes: { role: me.role, title: me.title || '', photo: me.photo || '' }, get audioLevel() { return net ? net.micLevel() : 0; }, get isSpeaking() { return net ? net.micLevel() > 0.06 : false; } },
+      remoteParticipants: new Map(),
+      disconnect() { if (net) net.close(); },
+      startAudio() { if (net) net.resumeAudio(); return Promise.resolve(); },
+    };
   }
   const amAdmin = () => me && isAdminRole(me.role);
-  const adminPresent = () => !!room && [...room.remoteParticipants.values()].some((p) => isAdminRole(pInfo(p).role));
-  const isLive = () => !!(svc && svc.openRoom) || state.live || adminPresent() || amAdmin();
+  const adminPresent = () => !!room;               // the church PC is the call: if we are connected, it is here
+  const isLive = () => !!(svc && svc.openRoom) || state.live || amAdmin();
 
   async function startCall(ticket, silent) {
-    me = ticket;
+    me = { ...ticket };
     if (ticket.role !== 'guest') saveMe(ticket);
     show('#scrCall');
     $('#cTitle').textContent = svc ? svc.title : 'Service';
@@ -338,108 +312,94 @@
     $('#dHand').hidden = svc && svc.allowHandRaise === false;
     $('#dChat').hidden = svc && svc.allowChat === false;
     if (DEMO) return Demo.start();
+    if (net) { net.close(); net = null; }
+    room = null;
     setState('Connecting…');
-    room = new LK.Room({
-      // The only video in the call is the TV screen. Do not let LiveKit shrink it to the tiny on-screen size.
-      adaptiveStream: false, dynacast: true,
-      audioCaptureDefaults: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      publishDefaults: { dtx: true, red: true },
-    });
-    bindRoom(room);
-    loadConfig().then(() => registerPush(false)).catch(() => {});
-    try { room.registerByteStreamHandler(FILE_TOPIC, receiveFile); } catch {}
-    try {
-      await room.connect(svc.livekitUrl, ticket.token, { autoSubscribe: true });
-    } catch (e) {
-      const msg = String(e && e.message || e);
-      if (/401|token|expired|unauthor/i.test(msg)) { forget(); }
-      show('#scrJoin');
-      $('#jErr').textContent = /full|limit/i.test(msg) ? 'The call is full right now. Please try again shortly.'
-        : /invalid token|unauthor|401/i.test(msg) ? 'Your pass for this service is out of date. Ask the admin to publish the service again, then sign in again.'
-        : /expired|not valid yet|nbf|exp/i.test(msg) ? 'This join link has expired or is not open yet. Ask the admin for the current link.'
-        : `Could not connect to the call (${msg.slice(0, 80)}). Check your internet and try again.`;
-      room = null;
+    const auth = ticket.guest ? { kind: 'guest', name: ticket.name } : { kind: 'member', id: ticket.identity, key: ticket.key };
+    if (!ticket.guest && !ticket.key) {
+      // a pass saved before the update: sign in again to get the new one
+      forget(); show('#scrJoin');
+      $('#jErr').textContent = 'JERICHO DEW was updated. Please sign in once more.';
       return;
     }
-    setTimeout(() => { if (room && room.state === 'connected') rejoinTries = 0; }, 20000);
+    const n = net = DewNet.create({ svc, auth, tv: !audioOnly, hd: tvHd, saver: dataSaver, audioEl: $('#callAudio') });
+    n.on('status', (st) => { if (net === n) onStatus(st, ticket, silent); })
+      .on('welcome', (m) => { if (net === n) onWelcome(m, silent); })
+      .on('msg', (m) => { if (net === n) onData(m); })
+      .on('quality', (q) => { if (net === n) showQuality(q); })
+      .on('autoplay-blocked', () => { $('#audioBanner').hidden = false; });
+    n.start();
+    loadConfig().catch(() => {});
+  }
+  function onWelcome(m, silent) {
+    if (m.you) { me.identity = m.you.id; me.name = m.you.n || me.name; }
+    room = makeRoom();
+    for (const x of m.people || []) if (x.id !== me.identity) room.remoteParticipants.set(x.id, mkPerson(x));
+    if (m.opts) { svc.allowChat = m.opts.allowChat; svc.allowHandRaise = m.opts.allowHandRaise; $('#dChat').hidden = svc.allowChat === false; $('#dHand').hidden = svc.allowHandRaise === false; }
     setupMediaSession();
+    registerPush(false);
     send({ t: 'hello' });
-    if (svc.joinMuted === false && isLive()) setMic(true);
-    render(); updateLive();
-    if (!room.canPlaybackAudio) $('#audioBanner').hidden = false;
-    if (!silent) toast(`Welcome, ${me.name.split(' ')[0]}`);
+    if (svc.joinMuted === false && isLive() && me.role !== 'guest') setMic(true);
+    render(); updateLive(); micUi(); renderRing();
+    if (!silent) toast(`Welcome, ${String(me.name).split(' ')[0]}`);
+  }
+  function onStatus(st, ticket) {
+    if (st === 'connecting') return setState('Connecting…');
+    if (st === 'reconnecting') { room = null; setState('Reconnecting…'); showQuality('lost'); render(); return; }
+    if (st === 'offline') { setState('No internet — trying again…'); showQuality('lost'); return; }
+    if (st === 'waiting-pc') {
+      room = null; render();
+      setState('Waiting for the church PC');
+      $('#waitBanner').hidden = false;
+      $('#waitText').textContent = 'The call runs on the church PC. It opens as soon as JERICHO DEW is open there — keep this page open.';
+      return;
+    }
+    if (st === 'connected') { $('#waitText').textContent = 'The service has not started yet. You will hear everyone as soon as it begins.'; return; }
+    if (/^denied:/.test(st)) {
+      const why = st.slice(7);
+      if (why === 'full') { setState('The call is full — trying again…'); toast('The call is full right now. This phone will try again by itself.', 'warn'); return; }
+      room = null;
+      if (why === 'bad-key') forget();
+      show('#scrJoin');
+      $('#jErr').textContent = why === 'bad-key' ? 'Your login has changed. Use this week\'s login card from your admin, or ask for a new join link.'
+        : why === 'no-guests' ? 'Guests cannot join right now.' : 'The church PC did not let this phone in.';
+      return;
+    }
+    if (/^kicked:/.test(st)) {
+      const why = st.slice(7);
+      room = null;
+      if (why === 'removed') return ended('You were removed from the call', 'Contact your admin if this was a mistake.');
+      if (why === 'other-device') return ended('You joined from another device', 'This phone has been disconnected because your account joined somewhere else.');
+      if (why === 'ended') return state.ended ? undefined : ended();
+      return ended('You were disconnected', 'Tap below to join again.');
+    }
   }
 
-  let rejoinTries = 0;
-  function reasonName(r) {
-    try { const D = LK.DisconnectReason; for (const k of Object.keys(D)) if (D[k] === r && isNaN(+k)) return k; } catch {}
-    return r === undefined ? '' : String(r);
-  }
-
-  function bindRoom(r) {
-    const E = LK.RoomEvent;
-    r.on(E.ParticipantConnected, (p) => { if (p.identity === 'host-pc') { registerPush(false); send({ t: 'roster-req' }); } render(); updateLive(); renderRing(); })
-      .on(E.ParticipantDisconnected, (p) => { hands.delete(p.identity); render(); updateLive(); renderRing(); })
-      .on(E.TrackSubscribed, (track, pub, p) => {
-        if (track.kind === 'audio') { const el = track.attach(); $('#audioSink').appendChild(el); }
-        if (track.kind === 'video' && pub.trackName === 'jd-tv') {
-          if (audioOnly) { try { pub.setSubscribed(false); } catch {} return; }
-          track.attach($('#tvVideo')); applyTvQuality(); updateTv();
-        }
-      })
-      .on(E.TrackUnsubscribed, (track, pub) => { track.detach().forEach((el) => { if (el.id !== 'tvVideo') el.remove(); }); if (pub.trackName === 'jd-tv') updateTv(); })
-      .on(E.TrackMuted, (pub, p) => { if (pub.trackName === 'jd-tv') updateTv(); if (p === r.localParticipant && pub.source === LK.Track.Source.Microphone) micUi(); render(); })
-      .on(E.TrackUnmuted, (pub) => { if (pub.trackName === 'jd-tv') updateTv(); render(); micUi(); })
-      .on(E.TrackPublished, (pub) => { if (pub && pub.trackName === 'jd-tv' && audioOnly) { try { pub.setSubscribed(false); } catch {} } render(); })
-      .on(E.ConnectionQualityChanged, (q, p) => { if (p === r.localParticipant) showQuality(q); })
-      .on(E.TrackUnpublished, () => render())
-      .on(E.LocalTrackPublished, () => { micUi(); render(); })
-      .on(E.LocalTrackUnpublished, () => { micUi(); render(); })
-      .on(E.ParticipantPermissionsChanged, (_prev, p) => {
-        if (p !== r.localParticipant || !me || me.role === 'guest') return;
-        const can = !!(p.permissions && p.permissions.canPublish);
-        me.blocked = !can; muteBanner(); micUi(); updateLive();
-      })
-      .on(E.AudioPlaybackStatusChanged, () => { $('#audioBanner').hidden = r.canPlaybackAudio; })
-      .on(E.DataReceived, (payload, from, _k, topic) => {
-        if (topic !== 'jd') return;
-        let m; try { m = JSON.parse(decT.decode(payload)); } catch { return; }
-        onData(m, from);
-      })
-      .on(E.Reconnecting, () => { setState('Reconnecting…'); showQuality('lost'); })
-      .on(E.Reconnected, () => { updateLive(); send({ t: 'hello' }); showQuality('good'); })
-      .on(E.Disconnected, (reason) => {
-        room = null;
-        if (reason === LK.DisconnectReason.ROOM_DELETED || state.ended) return ended();
-        if (reason === LK.DisconnectReason.PARTICIPANT_REMOVED) return ended('You were removed from the call', 'Contact your admin if this was a mistake.');
-        if (reason === LK.DisconnectReason.DUPLICATE_IDENTITY) return ended('You joined from another device', 'This phone has been disconnected because your account joined somewhere else.');
-        if (left) return;
-        const why = reasonName(reason);
-        if (why === 'JOIN_FAILURE' || why === 'STATE_MISMATCH' || why === 'SIGNAL_CLOSE' || why === 'UNKNOWN_REASON' || why === 'CLIENT_INITIATED' || why === 'SERVER_SHUTDOWN' || why === 'MIGRATION' || why === '') {
-          rejoinTries++;
-          if (rejoinTries > 4) {
-            show('#scrJoin');
-            $('#jErr').textContent = `The call keeps dropping (${why || 'network'}). Try switching between Wi-Fi and mobile data, then join again.`;
-            rejoinTries = 0;
-            return;
-          }
-          setState('Reconnecting…');
-          toast(`Connection lost. Rejoining… (${rejoinTries}/4)`, 'warn');
-          setTimeout(() => startCall(me, true), 1500 * rejoinTries);
-        } else {
-          ended('You were disconnected', `Reason: ${why}. Tap below to join again.`);
-        }
-      });
-  }
-
-  function onData(m, from) {
-    const info = from ? pInfo(from) : { role: 'member' };
-    if (m.t === 'chat') return addChat(from ? from.name : 'Admin', m.text, false);
-    if (m.t === 'hand') { m.up ? hands.add(from.identity) : hands.delete(from.identity); return render(); }
-    if (m.t === 'prayer') return amAdmin() ? onPrayer(m, from) : undefined; // sent privately to admins only
-    if (m.t === 'hello') { if (amAdmin() && state.v) send(state, [from.identity]); return; }
-    if (m.t === 'guest-req' || m.t === 'guest-ok' || m.t === 'guest-no') return;
-    if (!isAdminRole(info.role)) return; // only admins can control the room
+  function onData(m) {
+    // Everything arrives from the church PC, which checks who may do what.
+    if (m.t === 'pj' && m.p) { if (room && m.p.id !== me.identity) { room.remoteParticipants.set(m.p.id, mkPerson(m.p)); render(); renderRing(); } return; }
+    if (m.t === 'pl') { if (room) { room.remoteParticipants.delete(m.id); hands.delete(m.id); render(); renderRing(); } return; }
+    if (m.t === 'pu' && m.p) {
+      if (!room) return;
+      if (m.p.id === me.identity) return;
+      const p = room.remoteParticipants.get(m.p.id);
+      if (p) { p.mic = !!m.p.m; p.name = m.p.n; p.hand = !!m.p.h; m.p.h ? hands.add(p.identity) : hands.delete(p.identity); }
+      else room.remoteParticipants.set(m.p.id, mkPerson(m.p));
+      return render();
+    }
+    if (m.t === 'lv') {
+      if (!room) return;
+      const l = m.l || {};
+      for (const p of room.remoteParticipants.values()) { const v = Number(l[p.identity]) || 0; p.audioLevel = v; p.isSpeaking = v > 0.05; }
+      return;
+    }
+    if (m.t === 'tv') return onTv(m);
+    if (m.t === 'tvp') return onTvPart(m);
+    if (m.t === 'file') return onFileOffer(m);
+    if (m.t === 'file-start' || m.t === 'file-part') return onFileData(m);
+    if (m.t === 'file-no') { toast(m.why === 'big' ? 'That file is too big. Please keep it under 8 MB.' : m.why === 'slow' ? 'Please wait a moment before sending another file.' : 'That file is no longer available.', 'warn'); return; }
+    if (m.t === 'chat') return addChat(m.name || 'Someone', m.text, false);
+    if (m.t === 'prayer') return amAdmin() ? onPrayer(m) : undefined;
     if (m.t === 'roster') {
       if (!Array.isArray(m.list)) return;
       if (!m.i) rosterBuf = [];
@@ -448,7 +408,7 @@
       return;
     }
     if (m.t === 'ring-result' && m.to) return onRingResult(m);
-    if (m.t === 'admin-chat') { if (amAdmin()) addAdminChat(from ? from.name : 'Admin', m.text, false); return; }
+    if (m.t === 'admin-chat') { if (amAdmin()) addAdminChat(m.name || 'Admin', m.text, false); return; }
     if (m.t === 'queue') {
       // The church PC keeps the speaking queue; every phone follows it.
       const ids = Array.isArray(m.ids) ? m.ids.map(String).slice(0, 200) : [];
@@ -471,7 +431,7 @@
       updateTv(); updateMinister(); updateLive();
     }
     if (m.t === 'mute' && (m.to === me.identity || (m.to === '*' && !amAdmin()))) {
-      if (room && room.localParticipant.isMicrophoneEnabled) {
+      if (micOn()) {
         setMic(false);
         toast('An admin muted your microphone. Tap the mic when you want to speak.', 'warn');
       }
@@ -482,37 +442,28 @@
       if (!m.allow) setMic(false);
     }
     if (m.t === 'soft-mute' && m.to === me.identity) {
-      // Only the listener (the church PC or the admin) can still hear this phone.
+      // Only the admins can still hear this phone (the church PC does that in its mixer).
       me.softMuted = !!m.on;
-      if (room) room.localParticipant.setTrackSubscriptionPermissions(!m.on, m.on ? [{ participantIdentity: m.listener || from.identity, allowAll: true }] : []);
       muteBanner();
       if (!m.on) toast('Everyone can hear you again.');
       return;
     }
     if (m.t === 'blocked' && m.to === me.identity) {
       me.blocked = !!m.on; muteBanner(); micUi();
+      if (m.on) setMic(false);
       if (!m.on) toast('The admin gave your mic back. Tap the mic when you want to speak.', 'warn');
       return;
     }
     if (m.t === 'end' && m.open) {
-      state.ended = true; if (room) room.disconnect();
+      state.ended = true; if (net) net.close(); room = null;
       return ended('This session has ended', 'The service stays open — tap Join again any time to come back in.');
     }
-    if (m.t === 'end') { state.ended = true; if (room) room.disconnect(); ended(); }
+    if (m.t === 'end') { state.ended = true; if (net) net.close(); room = null; ended(); }
   }
 
-  function send(obj, to) {
-    if (!room) return;
-    room.localParticipant.publishData(encT.encode(JSON.stringify(obj)), { reliable: true, topic: 'jd', destinationIdentities: to }).catch(() => {});
-  }
+  function send(obj) { if (net) net.send(obj); }
+  // Helper admins change things through the church PC, which tells everyone.
   function pushState(patch) { state = { ...state, ...patch, t: 'state', v: Date.now() }; send(state); updateTv(); updateMinister(); updateLive(); }
-
-  // Helper admins keep the room state alive when the main PC is not in the call.
-  setInterval(() => {
-    if (!room || !amAdmin() || !state.v) return;
-    const hostHere = [...room.remoteParticipants.values()].some((p) => pInfo(p).role === 'host');
-    if (!hostHere) send(state);
-  }, 8000);
 
   function muteBanner() {
     const b = $('#muteBanner');
@@ -524,17 +475,16 @@
   /* ---------------- mic ---------------- */
   async function setMic(on) {
     if (DEMO) { Demo.mic = on; micUi(); render(); return; }
-    if (!room) return;
+    if (!net || !room) return;
     if (on && !isLive()) return toast('The service has not started yet.', 'warn');
-    try { await room.localParticipant.setMicrophoneEnabled(on); }
-    catch (e) { toast(/denied|permission/i.test(e.message) ? 'Allow microphone access in your browser settings to speak.' : 'Your microphone could not start.', 'warn'); }
+    if (on && (me.blocked || (me.role === 'guest' && !me.canSpeak))) return;
+    try { await net.setMic(on); }
+    catch (e) { toast(/denied|permission|notallowed/i.test(`${e.name} ${e.message}`) ? 'Allow microphone access in your browser settings to speak.' : 'Your microphone could not start.', 'warn'); }
     micUi(); render();
   }
   function micOn() {
     if (DEMO) return Demo.mic;
-    if (!room) return false;
-    const pub = room.localParticipant.getTrackPublication(LK.Track.Source.Microphone);
-    return !!(pub && !pub.isMuted && room.localParticipant.isMicrophoneEnabled);
+    return !!(net && net.micOn);
   }
   function micUi() {
     const on = micOn();
@@ -562,9 +512,8 @@
   }
   function pMic(p) {
     if (p.demo) return p.mic;
-    if (p === (room && room.localParticipant)) return micOn();
-    const pub = p.getTrackPublication(LK.Track.Source.Microphone);
-    return !!(pub && !pub.isMuted);
+    if (room && p === room.localParticipant) return micOn();
+    return !!p.mic;
   }
   let renderQueued = false;
   function render() {
@@ -635,33 +584,48 @@
   }
 
   /* ---------------- TV ---------------- */
-  function tvTrackPub() {
-    if (DEMO || !room) return null;
-    for (const p of room.remoteParticipants.values()) {
-      const pub = [...p.trackPublications.values()].find((t) => t.trackName === 'jd-tv');
-      if (pub) return pub;
+  // The church PC sends the TV screen as a picture each time it changes (a few seconds apart while a video plays).
+  // Much lighter than video: about 100 KB per new screen in HD, 30 KB in saver mode.
+  let tvPic = null;            // { v, n, parts: [] } being received
+  let tvHave = false;
+  function onTv(m) {
+    if (!m.on) { tvHave = false; tvPic = null; state.tv = { ...(state.tv || {}), on: false }; return updateTv(); }
+    tvPic = { v: m.v, n: m.n || 0, parts: new Array(m.n || 0), got: 0 };
+  }
+  function onTvPart(m) {
+    if (!tvPic || m.v !== tvPic.v || tvPic.parts[m.i] !== undefined) return;
+    tvPic.parts[m.i] = m.d; tvPic.got++;
+    if (tvPic.got === tvPic.n) {
+      const url = tvPic.parts.join(''); tvPic = null;
+      if (!/^data:image\/(webp|jpeg|png);base64,/.test(url)) return;
+      const img = $('#tvImg');
+      const first = !tvHave;
+      img.onload = () => { tvHave = true; updateTv(); if (first) powerOnTv(); };
+      img.src = url;
     }
-    return null;
   }
   function updateTv() {
-    const pub = tvTrackPub();
-    const has = DEMO ? state.tv.on : !!(pub && pub.track && !pub.isMuted);
+    const has = DEMO ? state.tv.on : tvHave;
     $('#tvSlot').hidden = audioOnly || !(state.tv && state.tv.on && has);
     $('#tvPaused').hidden = !(audioOnly && state.tv && state.tv.on);
   }
-  /* ---- low data: audio only (TV picture is not downloaded at all) ---- */
+  /* ---- low data: audio only (no TV pictures, lighter sound) ---- */
   let audioOnly = false;
   try { audioOnly = localStorage.getItem('jd-audio-only') === '1'; } catch {}
+  // TV pictures in HD by default; "Saver" asks the church PC for a lighter picture.
+  let tvHd = true;
+  try { tvHd = localStorage.getItem('jd-tv-hd') !== '0'; } catch {}
+  let dataSaver = audioOnly;
   function setAudioOnly(on, quiet) {
-    audioOnly = !!on;
+    audioOnly = !!on; dataSaver = audioOnly;
     try { localStorage.setItem('jd-audio-only', on ? '1' : '0'); } catch {}
-    const pub = tvTrackPub();
-    if (pub && pub.setSubscribed) { try { pub.setSubscribed(!on); } catch {} }
-    if (!on && pub && pub.track) { try { pub.track.attach($('#tvVideo')); applyTvQuality(); } catch {} }
+    send({ t: 'tv-sub', on: !on, hd: tvHd });
+    send({ t: 'saver', on: dataSaver });
+    if (on) tvHave = false;
     $('#bwBtn').classList.toggle('on', on);
-    $('#bwBtn').title = on ? 'TV paused. Tap to bring the picture back.' : 'Audio only: pause the TV picture to save data';
+    $('#bwBtn').title = on ? 'Data saver is on. Tap to bring the TV pictures back.' : 'Data saver: sound only, lighter on data';
     updateTv();
-    if (!quiet) toast(on ? 'Audio only: the TV picture is paused to save your data.' : 'TV picture is back on.');
+    if (!quiet) toast(on ? 'Data saver: sound only, and lighter sound. Uses about 12 MB an hour.' : 'TV pictures are back on.');
   }
   $('#bwBtn').onclick = () => setAudioOnly(!audioOnly);
   $('#tvResume').onclick = () => setAudioOnly(false);
@@ -682,23 +646,19 @@
   window.addEventListener('offline', () => { $('#netBanner').hidden = false; showQuality('lost'); });
   window.addEventListener('online', () => {
     $('#netBanner').hidden = true;
-    if (me && !room && !left && !$('#scrCall').hidden) startCall(me, true);
-    else if (room) { try { room.startAudio(); } catch {} }
+    if (net) net.resumeAudio();
+    else if (me && !left && !$('#scrCall').hidden) startCall(me, true);
   });
   setAudioOnly(audioOnly, true);
-  // HD by default. "Data saver" lets people on weak mobile data ask for a lighter copy.
-  let tvHd = true;
-  try { tvHd = localStorage.getItem('jd-tv-hd') !== '0'; } catch {}
   function applyTvQuality() {
-    const pub = tvTrackPub();
-    if (pub && pub.setVideoQuality) { try { pub.setVideoQuality(tvHd ? LK.VideoQuality.HIGH : LK.VideoQuality.LOW); } catch {} }
+    send({ t: 'tv-sub', on: !audioOnly, hd: tvHd });
     const b = $('#tvQuality'); if (b) { b.textContent = tvHd ? 'HD' : 'Saver'; b.classList.toggle('saver', !tvHd); b.title = tvHd ? 'Sharp picture. Tap to save data.' : 'Data saver. Tap for the sharp picture.'; }
   }
   $('#tvQuality').addEventListener('click', (e) => {
     e.stopPropagation();
     tvHd = !tvHd; try { localStorage.setItem('jd-tv-hd', tvHd ? '1' : '0'); } catch {}
     applyTvQuality();
-    toast(tvHd ? 'TV picture set to HD.' : 'Data saver on: the TV picture is lighter.');
+    toast(tvHd ? 'TV picture set to HD.' : 'Saver: the TV picture is lighter.');
   });
   applyTvQuality();
   function powerOnTv() {
@@ -723,7 +683,7 @@
   }
 
   /* ---------------- audio playback & background ---------------- */
-  $('#audioOn').onclick = async () => { if (room) await room.startAudio(); $('#audioBanner').hidden = true; };
+  $('#audioOn').onclick = () => { if (net) net.resumeAudio(); $('#audioBanner').hidden = true; };
   function setupMediaSession() {
     if (!('mediaSession' in navigator)) return;
     try {
@@ -739,7 +699,7 @@
   }
   // When the phone comes back to the page, make sure sound resumes.
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && room) { room.startAudio().catch(() => {}); document.querySelectorAll('#audioSink audio').forEach((a) => a.play().catch(() => {})); }
+    if (document.visibilityState === 'visible' && net) net.resumeAudio();
   });
 
   /* ---------------- hand & chat ---------------- */
@@ -763,8 +723,8 @@
     pushChatEl(d, mine);
   }
 
-  /* ---- files in messages (photos, PDFs, documents) ---- */
-  const FILE_TOPIC = 'jd-file';
+  /* ---- files in messages (photos, PDFs, documents) ----
+     A file is sent once to the church PC. Others see a card (with a small preview for photos) and download it only if they tap. */
   const MAX_FILE = 8 * 1024 * 1024; // 8 MB
   const IMG_OK = /^image\/(png|jpe?g|gif|webp)$/i;
   const fmtSize = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
@@ -779,25 +739,58 @@
       `<a class="att" href="${url}" download="${esc(safeFile(file.name))}"><span class="att-ic">${isImg ? '🖼' : '📎'}</span><span class="att-t"><span class="att-n">${esc(safeFile(file.name))}</span><span class="att-s">${fmtSize(file.size)} · Tap to save</span></span></a>`;
     pushChatEl(d, mine);
   }
-  async function receiveFile(reader, info) {
-    const from = info && info.participantInfo ? info.participantInfo.identity : '';
-    if (from === (me && me.identity)) return;
-    const size = (info && info.size) || 0;
-    if (size > MAX_FILE) return;
-    let chunks;
-    try { chunks = await reader.readAll(); } catch { return; }
-    const blob = new Blob(chunks, { type: (info && info.mimeType) || 'application/octet-stream' });
-    if (blob.size > MAX_FILE) return;
-    const p = room && room.remoteParticipants.get(from);
-    addChatFile((p && p.name) || 'Someone', { name: info.name, size: blob.size, type: info.mimeType }, blob, false);
+  const offers = new Map();   // fid -> { el, parts, n }
+  function onFileOffer(m) {
+    const isImg = IMG_OK.test(m.type || '');
+    const d = document.createElement('div');
+    d.className = 'msg has-file';
+    const thumb = typeof m.thumb === 'string' && /^data:image\/jpeg;base64,/.test(m.thumb) ? m.thumb : '';
+    d.innerHTML = `<b>${esc(m.name || 'Someone')}</b>` + (thumb ? `<img class="att-img" src="${thumb}" alt="">` : '') +
+      `<button class="att" type="button"><span class="att-ic">${isImg ? '🖼' : '📎'}</span><span class="att-t"><span class="att-n">${esc(safeFile(m.fname))}</span><span class="att-s">${fmtSize(m.size || 0)} · Tap to download</span></span></button>`;
+    const btn = d.querySelector('button.att');
+    btn.onclick = () => {
+      if (offers.has(m.fid)) return;
+      btn.querySelector('.att-s').textContent = 'Downloading…';
+      offers.set(m.fid, { el: d, btn, meta: m, parts: [], got: 0, n: 0 });
+      send({ t: 'file-get', fid: m.fid });
+    };
+    pushChatEl(d, false);
   }
+  function onFileData(m) {
+    const o = offers.get(m.fid); if (!o) return;
+    if (m.t === 'file-start') { o.n = m.n; o.type = m.type; o.name = m.name; return; }
+    if (o.parts[m.i] !== undefined) return;
+    o.parts[m.i] = m.d; o.got++;
+    if (o.n) o.btn.querySelector('.att-s').textContent = `Downloading… ${Math.round((o.got / o.n) * 100)}%`;
+    if (o.n && o.got === o.n) {
+      offers.delete(m.fid);
+      const bin = atob(o.parts.join('')); const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const blob = new Blob([bytes], { type: o.type || 'application/octet-stream' });
+      const url = URL.createObjectURL(blob);
+      o.el.dataset.url = url;
+      const a = document.createElement('a'); a.className = 'att'; a.href = url; a.download = safeFile(o.name || o.meta.fname);
+      a.innerHTML = o.btn.innerHTML; a.querySelector('.att-s').textContent = `${fmtSize(blob.size)} · Tap to save`;
+      o.btn.replaceWith(a);
+      const img = o.el.querySelector('img.att-img'); if (img && IMG_OK.test(blob.type)) img.src = url;
+    }
+  }
+  let lastFileAt = 0;
   $('#chatFile').onchange = async (e) => {
     const f = e.target.files && e.target.files[0]; e.target.value = '';
-    if (!f || !room) return;
+    if (!f || !net || !room) return;
     if (f.size > MAX_FILE) return toast(`That file is too big. Please keep it under ${fmtSize(MAX_FILE)}.`, 'warn');
+    if (Date.now() - lastFileAt < 9000) return toast('Please wait a moment before sending another file.', 'warn');
+    lastFileAt = Date.now();
     try {
       toast('Sending file…');
-      await room.localParticipant.sendFile(f, { topic: FILE_TOPIC, mimeType: f.type || 'application/octet-stream' });
+      const buf = new Uint8Array(await f.arrayBuffer());
+      let bin = ''; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+      const data = btoa(bin), PART = 16000, n = Math.ceil(data.length / PART);
+      const fid = `${me.identity}-${Date.now().toString(36)}`;
+      for (let i = 0; i < n; i++) {
+        send({ t: 'file-put', fid, i, last: i === n - 1, name: f.name, size: f.size, type: f.type || 'application/octet-stream', d: data.slice(i * PART, (i + 1) * PART) });
+        if (i % 20 === 19) await new Promise((r) => setTimeout(r, 30));
+      }
       addChatFile('', f, f, true);
     } catch { toast('The file could not be sent. Try again.', 'warn'); }
   };
@@ -826,7 +819,7 @@
     const t = $('#chatInput').value.trim(); if (!t) return;
     if (chatTab === 'admin' && amAdmin()) {
       const ids = adminIds();
-      if (ids.length) send({ t: 'admin-chat', text: t }, ids); else toast('No other admin is in the call right now.', 'warn');
+      send({ t: 'admin-chat', text: t });
       addAdminChat('', t, true);
     } else { send({ t: 'chat', text: t }); addChat('', t, true); }
     $('#chatInput').value = '';
@@ -924,9 +917,9 @@
     toast('Your request was sent privately to the admins. God bless you.');
   };
   const prayers = [];
-  function onPrayer(m, from) {
+  function onPrayer(m) {
     if (prayers.some((x) => x.id === m.id)) return;
-    prayers.unshift({ id: String(m.id).slice(0, 80), who: m.anon ? 'Anonymous' : (from ? from.name : 'Member'), text: String(m.text || '').slice(0, 300) });
+    prayers.unshift({ id: String(m.id).slice(0, 80), who: m.anon ? 'Anonymous' : (m.name || 'Member'), text: String(m.text || '').slice(0, 300) });
     if (prayers.length > 60) prayers.pop();
     $('#prBox').hidden = false; $('#prCount').textContent = `(${prayers.length})`;
     $('#prList').innerHTML = prayers.map((x) => `<div class="pr-item"><b>${esc(x.who)}</b>${esc(x.text)}</div>`).join('');
@@ -948,7 +941,7 @@
   $('#aEnd').onclick = () => {
     if (!confirm('End the service for everyone?')) return;
     state.ended = true; send({ t: 'end' }); pushState({ live: false });
-    setTimeout(() => { if (room) room.disconnect(); ended(); }, 400);
+    setTimeout(() => { if (net) net.close(); room = null; ended(); }, 400);
   };
   $('#psMute').onclick = () => { if (personTarget) { send({ t: 'mute', to: personTarget.identity, by: me.name }, [personTarget.identity]); toast(`${personTarget.name} has been muted.`); if (DEMO) personTarget.mic = false; render(); } closeSheets(); };
   $('#psSoft').onclick = () => {
@@ -973,7 +966,8 @@
   $('#dLeave').onclick = async () => {
     if (!confirm('Leave the service?')) return;
     left = true;
-    if (room) await room.disconnect();
+    if (net) net.close();
+    room = null;
     forget();
     ended('You left the service', 'Tap below to join again.');
   };
@@ -998,7 +992,7 @@
   }
   $('#rejoin').onclick = () => { location.href = location.pathname; };
   $('#signOut').onclick = () => { forgetCred(); try { Object.keys(localStorage).filter((k) => k.startsWith('jd-ticket-')).forEach((k) => localStorage.removeItem(k)); } catch {} location.href = location.pathname; };
-  window.addEventListener('pagehide', () => { if (room && left) room.disconnect(); });
+  window.addEventListener('pagehide', () => { if (net && left) net.close(); });
 
   /* ---------------- demo (preview without a server): add ?demo to the link ---------------- */
   const Demo = {
@@ -1010,7 +1004,6 @@
         .concat(names.map((n, i) => ({ identity: `u${i}`, name: n, demo: true, mic: i < 3, audioLevel: 0, attributes: { role: i === 0 ? 'host' : i === 1 ? 'admin2' : 'member', title: i === 0 ? 'Senior Pastor' : '' } })));
       state = { v: 1, live: true, tv: { on: true }, minister: { name: 'Pastor Kwame Asante', title: 'Senior Pastor' } };
       hands.add('u5');
-      const v = $('#tvVideo');
       const c = document.createElement('canvas'); c.width = 1280; c.height = 720;
       const g = c.getContext('2d');
       const logo = new Image(); logo.src = 'logo.png';
@@ -1024,7 +1017,8 @@
         g.fillStyle = '#fba100'; g.fillRect(0, 714, 1280, 6);
       };
       draw(); setInterval(draw, 1000);
-      try { v.srcObject = c.captureStream(5); v.play().catch(() => {}); } catch {}
+      const pic = () => { try { $('#tvImg').src = c.toDataURL('image/webp', 0.8); } catch {} };
+      setTimeout(pic, 400); setInterval(pic, 3000);
       setInterval(() => { this.list.forEach((p) => { if (p.mic) p.audioLevel = Math.random() < 0.35 ? Math.random() * 0.3 : 0; }); }, 220);
       setTimeout(powerOnTv, 300);
       $('#chatLog').innerHTML = '';
@@ -1043,5 +1037,6 @@
     $('#jUser').required = false; $('#jPass').required = false;
   }
 
+  window.JD = { get net() { return net; } };   // for checking a phone from the browser console
   loadService();
 })();

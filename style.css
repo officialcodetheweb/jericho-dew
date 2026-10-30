@@ -112,10 +112,10 @@ input { font: inherit; color: var(--text); }
   box-shadow: 0 26px 50px -22px rgba(0,0,0,.9), inset 0 1px 0 rgba(255,255,255,.14), inset 0 -1px 0 rgba(0,0,0,.6), 0 0 0 1px #05070b;
 }
 .tv-screen { position: relative; aspect-ratio: 16 / 9; border-radius: 8px; overflow: hidden; background: #000; box-shadow: inset 0 0 0 2px #000, inset 0 0 28px rgba(0,0,0,.9); }
-.tv-screen video { width: 100%; height: 100%; object-fit: contain; display: block; background: #000; }
+.tv-screen video, .tv-screen img { width: 100%; height: 100%; object-fit: contain; display: block; background: #000; }
 .tv-glass { position: absolute; inset: 0; pointer-events: none; background: linear-gradient(155deg, rgba(255,255,255,.10), rgba(255,255,255,0) 38%), radial-gradient(130% 100% at 50% 50%, transparent 60%, rgba(0,0,0,.45)); }
 .tv-static { position: absolute; inset: 0; pointer-events: none; opacity: 0; background: #fff; }
-.tv.powering .tv-screen video { animation: crtOn .7s ease-out; }
+.tv.powering .tv-screen video, .tv.powering .tv-screen img { animation: crtOn .7s ease-out; }
 .tv.powering .tv-static { animation: flash .7s ease-out; }
 @keyframes crtOn { 0% { transform: scale(1, .004); filter: brightness(6); } 40% { transform: scale(1, .004); filter: brightness(6); } 70% { transform: scale(1, 1.02); filter: brightness(1.6); } 100% { transform: scale(1, 1); filter: none; } }
 @keyframes flash { 0% { opacity: 0; } 35% { opacity: .9; transform: scale(1, .006); } 60% { opacity: .2; transform: scale(1, 1); } 100% { opacity: 0; } }
@@ -354,3 +354,6 @@ input { font: inherit; color: var(--text); }
 .ringing .btn-join, .ringing .install { width: min(320px, 100%); }
 .rg-bell { width: 120px; height: 120px; border-radius: 50%; display: grid; place-items: center; background: linear-gradient(180deg, #ffbf47, var(--orange-deep)); color: #1c1000; box-shadow: 0 0 0 14px rgba(251,161,0,.18), 0 0 0 30px rgba(251,161,0,.08); animation: shake .5s ease-in-out infinite; }
 .rg-bell svg { width: 60px; height: 60px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+.tv-screen img { transition: opacity .35s ease; }
+.msg button.att { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-align: left; width: 100%; }

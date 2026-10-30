@@ -1,0 +1,3 @@
+opus-decoder.min.js — from the "opus-decoder" package (wasm-audio-decoders) by Ethan Halsall, MIT License.
+https://github.com/eshaz/wasm-audio-decoders
+It contains libopus (https://opus-codec.org), BSD 3-Clause License, Copyright Xiph.Org Foundation and contributors.
