@@ -318,6 +318,14 @@
     room = null;
     setState('Connecting…');
     const auth = ticket.guest ? { kind: 'guest', name: ticket.name } : { kind: 'member', id: ticket.identity, key: ticket.key };
+    const useLk = svc && svc.engine === 'livekit';
+    if (useLk && !ticket.guest && !ticket.lk) {
+      // a pass saved before the church switched to the LiveKit voice server: sign in again to get the new one
+      forget(); show('#scrJoin');
+      $('#jErr').textContent = 'JERICHO DEW was updated. Please sign in once more.';
+      return;
+    }
+    if (useLk && !ticket.guest) return startLk(ticket, { url: svc.livekitUrl, token: ticket.lk }, silent);
     if (!ticket.guest && !ticket.key) {
       // a pass saved before the update: sign in again to get the new one
       forget(); show('#scrJoin');
@@ -325,6 +333,22 @@
       return;
     }
     const n = net = DewNet.create({ svc, auth, tv: !audioOnly, hd: tvHd, saver: dataSaver, audioEl: $('#callAudio') });
+    n.on('status', (st) => { if (net === n) onStatus(st, ticket, silent); })
+      .on('welcome', (m) => { if (net === n) onWelcome(m, silent); })
+      .on('msg', (m) => {
+        if (net !== n) return;
+        // LiveKit service: the church PC gives this guest a pass to the voice room
+        if (m.t === 'lk-pass' && ticket.guest) { n.close(); net = null; me.identity = m.identity; me.name = m.name; return startLk({ ...ticket, identity: m.identity, name: m.name }, { url: m.url || svc.livekitUrl, token: m.token }, silent); }
+        onData(m);
+      })
+      .on('quality', (q) => { if (net === n) showQuality(q); })
+      .on('autoplay-blocked', () => { $('#audioBanner').hidden = false; });
+    n.start();
+    loadConfig().catch(() => {});
+  }
+  // The call through the LiveKit voice server (lknet.js): same events as the direct link to the PC
+  function startLk(ticket, pass, silent) {
+    const n = net = LkNet.create({ svc, lk: pass, tv: !audioOnly, hd: tvHd, saver: dataSaver });
     n.on('status', (st) => { if (net === n) onStatus(st, ticket, silent); })
       .on('welcome', (m) => { if (net === n) onWelcome(m, silent); })
       .on('msg', (m) => { if (net === n) onData(m); })
@@ -362,6 +386,7 @@
       const why = st.slice(7);
       if (why === 'full') { setState('The call is full — trying again…'); toast('The call is full right now. This phone will try again by itself.', 'warn'); return; }
       room = null;
+      if (why === 'engine') { setState('Updating…'); setTimeout(() => location.reload(), 1500); return; }   // the church switched how calls run
       if (why === 'bad-key') forget();
       show('#scrJoin');
       $('#jErr').textContent = why === 'bad-key' ? 'Your login has changed. Use this week\'s login card from your admin, or ask for a new join link.'
@@ -791,11 +816,12 @@
       toast('Sending file…');
       const buf = new Uint8Array(await f.arrayBuffer());
       let bin = ''; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
-      const data = btoa(bin), PART = 16000, n = Math.ceil(data.length / PART);
+      const PART = (net && net.maxPart) || 16000;
+      const data = btoa(bin), n = Math.ceil(data.length / PART);
       const fid = `${me.identity}-${Date.now().toString(36)}`;
       for (let i = 0; i < n; i++) {
         send({ t: 'file-put', fid, i, last: i === n - 1, name: f.name, size: f.size, type: f.type || 'application/octet-stream', d: data.slice(i * PART, (i + 1) * PART) });
-        if (i % 20 === 19) await new Promise((r) => setTimeout(r, 30));
+        if (i % (net && net.maxPart ? 6 : 20) === (net && net.maxPart ? 5 : 19)) await new Promise((r) => setTimeout(r, net && net.maxPart ? 60 : 30));
       }
       addChatFile('', f, f, true);
     } catch { toast('The file could not be sent. Try again.', 'warn'); }
@@ -1040,7 +1066,7 @@
     const r = loadProfReq();
     if (r && me && r.id === me.identity && room) {
       if (r.photo) {
-        const PART = 15000, n = Math.ceil(r.photo.length / PART);
+        const PART = Math.min(15000, (net && net.maxPart) || 15000), n = Math.ceil(r.photo.length / PART);
         for (let i = 0; i < n; i++) send({ t: 'set-profile-part', rid: r.rid, i, n, d: r.photo.slice(i * PART, (i + 1) * PART) });
       }
       send({ t: 'set-profile', rid: r.rid, name: r.name, region: r.region, town: r.town, photo: !!r.photo });
