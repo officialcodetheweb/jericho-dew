@@ -1,14 +1,14 @@
 {
   "church": "Jericho Afasuo Prayer City",
-  "updatedAt": 1793380247524,
+  "updatedAt": 1794513402075,
   "services": [
     {
       "id": "2026-10-26-838c77",
       "title": "Today's Service",
-      "date": "2026-10-26",
+      "date": "2026-11-12",
       "time": "00:00",
-      "startsAt": 1793016000000,
-      "expiresAt": 1793538000000
+      "startsAt": 1794484800000,
+      "expiresAt": 1798808400000
     }
   ]
 }
