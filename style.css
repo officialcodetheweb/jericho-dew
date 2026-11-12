@@ -357,3 +357,14 @@ input { font: inherit; color: var(--text); }
 
 .tv-screen img { transition: opacity .35s ease; }
 .msg button.att { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-align: left; width: 100%; }
+
+/* my account */
+.c-me { flex: none; width: 34px; height: 34px; border-radius: 10px; border: 2px solid var(--orange); background: linear-gradient(135deg, var(--blue), var(--blue-deep)) center/cover; font-size: 13px; font-weight: 700; display: grid; place-items: center; }
+.pass-form { margin-top: 16px; }
+.pass-form h4 { margin: 0; font-size: 15px; font-weight: 600; }
+.pass-form .hint { margin: 0; }
+#meSheet .me-card span { color: var(--muted); font-size: 13px; }
+.forgot { justify-self: center; color: #7fb0ff; font-size: 14px; padding: 4px 8px; text-decoration: underline; text-underline-offset: 3px; }
+.forgot-help { margin: 0; padding: 12px 14px; border-radius: 14px; background: rgba(255,255,255,.05); border: 1px solid var(--line); color: var(--muted); font-size: 14px; line-height: 1.5; }
+.forgot-help b { color: #fff; }
+@media (max-width: 400px) { .c-me { display: none; } }

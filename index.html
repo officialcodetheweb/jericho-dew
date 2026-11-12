@@ -48,6 +48,8 @@
       <label class="remember"><input type="checkbox" id="jRemember" checked> Keep me signed in on this phone</label>
       <p class="err" id="jErr" role="alert"></p>
       <button class="btn-join" id="jBtn" type="submit">Join the service</button>
+      <button type="button" class="forgot" id="jForgot">Forgot your password?</button>
+      <p class="forgot-help" id="jForgotHelp" hidden>If you have your own <b>join link</b> (or QR card), just tap it — no password needed. Then, in the call, tap your own picture and choose <b>Change my password</b>. No link? Ask an admin to give you a new password or link.</p>
     </form>
     <div class="guest" id="guestBox" hidden>
       <div class="or"><span>or</span></div>
@@ -72,6 +74,7 @@
     <button type="button" class="hd-btn bw-btn" id="bwBtn" aria-label="Audio only: pause the TV picture to save data" title="Audio only: pause the TV picture to save data"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8"/><path class="slash" d="M3 3l18 18"/></svg></button>
     <span class="cq" id="cQual" title="Your connection"><i></i><i></i><i></i></span>
     <span class="people" id="cCount" title="People in the call">0</span>
+    <button type="button" class="c-me" id="cMe" aria-label="My account" title="My account" hidden></button>
   </header>
 
   <div class="call-scroll" id="callScroll">
@@ -154,6 +157,20 @@
     </div>
     <p class="hint">Tap anyone in the call to mute them or show them as the minister.</p>
     <div class="pr-box" id="prBox" hidden><h4>Prayer requests <span id="prCount"></span></h4><div class="pr-list" id="prList"></div></div>
+  </section>
+  <section class="sheet" id="meSheet" hidden>
+    <div class="sheet-grip"></div>
+    <header><h3>My account</h3><button class="close" data-close-sheet>Close</button></header>
+    <div class="me-card"><div class="lj-photo" id="msPhoto"></div><div><b id="msName"></b><span id="msUser"></span></div></div>
+    <form class="join-form pass-form" id="passForm" autocomplete="off">
+      <h4>Change my password</h4>
+      <label><span>New password</span><div class="pw"><input id="npPass" type="password" autocomplete="new-password" minlength="4" maxlength="64" required><button type="button" id="npEye">Show</button></div></label>
+      <label><span>Type it again</span><input id="npPass2" type="password" autocomplete="new-password" required></label>
+      <p class="err" id="npErr" role="alert"></p>
+      <p class="hint" id="npStatus" hidden></p>
+      <button class="btn-join" id="npGo" type="submit">Save new password</button>
+      <p class="hint">Use it next time you sign in with your username. Your join link keeps working as before.</p>
+    </form>
   </section>
   <section class="sheet" id="personSheet" hidden>
     <div class="sheet-grip"></div>

@@ -309,6 +309,8 @@
     show('#scrCall');
     $('#cTitle').textContent = svc ? svc.title : 'Service';
     $('#dAdmin').hidden = !amAdmin();
+    $('#cMe').hidden = !!ticket.guest || ticket.role === 'guest';
+    paintPhoto($('#cMe'), ticket);
     $('#dHand').hidden = svc && svc.allowHandRaise === false;
     $('#dChat').hidden = svc && svc.allowChat === false;
     if (DEMO) return Demo.start();
@@ -339,6 +341,7 @@
     setupMediaSession();
     registerPush(false);
     send({ t: 'hello' });
+    setTimeout(trySendPass, 1200);
     if (svc.joinMuted === false && isLive() && me.role !== 'guest') setMic(true);
     render(); updateLive(); micUi(); renderRing();
     if (!silent) toast(`Welcome, ${String(me.name).split(' ')[0]}`);
@@ -398,6 +401,7 @@
     if (m.t === 'file') return onFileOffer(m);
     if (m.t === 'file-start' || m.t === 'file-part') return onFileData(m);
     if (m.t === 'file-no') { toast(m.why === 'big' ? 'That file is too big. Please keep it under 8 MB.' : m.why === 'slow' ? 'Please wait a moment before sending another file.' : 'That file is no longer available.', 'warn'); return; }
+    if (m.t === 'pass-result') return passResult(m);
     if (m.t === 'chat') return addChat(m.name || 'Someone', m.text, false);
     if (m.t === 'prayer') return amAdmin() ? onPrayer(m) : undefined;
     if (m.t === 'roster') {
@@ -561,6 +565,7 @@
 
   $('#grid').addEventListener('click', (e) => {
     const t = e.target.closest('.p');
+    if (t && me && t.dataset.id === me.identity && me.role !== 'guest' && !me.guest) return $('#cMe').onclick();
     if (!t || !amAdmin() || t.dataset.id === me.identity) return;
     const p = people().find((x) => x.identity === t.dataset.id);
     if (!p) return;
@@ -928,7 +933,7 @@
 
   /* ---------------- sheets ---------------- */
   function openSheet(id) { closeSheets(); $('#sheetBg').hidden = false; $(id).hidden = false; }
-  function closeSheets() { ['#chatSheet', '#adminSheet', '#personSheet', '#praySheet', '#ringSheet'].forEach((s) => ($(s).hidden = true)); $('#sheetBg').hidden = true; }
+  function closeSheets() { ['#chatSheet', '#adminSheet', '#personSheet', '#praySheet', '#ringSheet', '#meSheet'].forEach((s) => ($(s).hidden = true)); $('#sheetBg').hidden = true; }
   $('#sheetBg').onclick = closeSheets;
   document.querySelectorAll('[data-close-sheet]').forEach((b) => (b.onclick = closeSheets));
 
@@ -960,6 +965,60 @@
     }
     closeSheets();
   };
+
+  /* ---------------- my account: change my own password ----------------
+     The new password goes only to the church PC (this phone already proved who it is when it connected).
+     The PC saves it and uploads the new login. If the PC is not reachable, the phone keeps it and sends it next time. */
+  const loadPassReq = () => { try { return JSON.parse(localStorage.getItem('jd-pass-req') || 'null'); } catch { return null; } };
+  const savePassReq = (r) => { try { r ? localStorage.setItem('jd-pass-req', JSON.stringify(r)) : localStorage.removeItem('jd-pass-req'); } catch {} };
+  function passStatus() {
+    const r = loadPassReq();
+    const el = $('#npStatus');
+    const mine = r && me && r.id === me.identity;
+    el.hidden = !mine;
+    if (mine) el.textContent = room ? 'Sending your new password to the church PC…' : 'Your new password is saved on this phone. It switches on as soon as this phone reaches the church PC.';
+  }
+  function trySendPass() {
+    const r = loadPassReq();
+    if (r && me && r.id === me.identity && room) send({ t: 'set-pass', pw: r.pw, rid: r.rid });
+    passStatus();
+  }
+  function passResult(m) {
+    const r = loadPassReq();
+    if (!r || m.rid !== r.rid) return;
+    savePassReq(null);
+    if (m.ok) {
+      const c = loadCred();
+      if (c && String(c.u).toLowerCase() === me.identity) saveCred(c.u, r.pw);
+      toast('Your new password is ready. Use it next time you sign in.');
+      $('#npStatus').hidden = false; $('#npStatus').textContent = 'Done — your new password works now.';
+    } else {
+      $('#npStatus').hidden = true;
+      $('#npErr').textContent = m.text || 'The church PC could not change your password.';
+    }
+  }
+  $('#cMe').onclick = () => {
+    if (!me) return;
+    paintPhoto($('#msPhoto'), me);
+    $('#msName').textContent = me.name;
+    $('#msUser').textContent = `Username: ${me.identity}`;
+    $('#npErr').textContent = '';
+    passStatus();
+    openSheet('#meSheet');
+  };
+  $('#npEye').onclick = () => { const i = $('#npPass'); i.type = i.type === 'password' ? 'text' : 'password'; $('#npEye').textContent = i.type === 'password' ? 'Show' : 'Hide'; };
+  $('#passForm').onsubmit = (e) => {
+    e.preventDefault();
+    $('#npErr').textContent = '';
+    const pw = $('#npPass').value;
+    if (pw.length < 4) return ($('#npErr').textContent = 'Use at least 4 letters or numbers.');
+    if (pw !== $('#npPass2').value) return ($('#npErr').textContent = 'The two passwords are not the same.');
+    savePassReq({ id: me.identity, pw, rid: Math.random().toString(36).slice(2, 10), at: Date.now() });
+    $('#npPass').value = ''; $('#npPass2').value = '';
+    if (DEMO) { savePassReq(null); $('#npStatus').hidden = false; $('#npStatus').textContent = 'Done — your new password works now.'; return; }
+    trySendPass();
+  };
+  $('#jForgot').onclick = () => { $('#jForgotHelp').hidden = !$('#jForgotHelp').hidden; };
 
   /* ---------------- leave / end ---------------- */
   let left = false;
