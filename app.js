@@ -341,7 +341,7 @@
     setupMediaSession();
     registerPush(false);
     send({ t: 'hello' });
-    setTimeout(trySendPass, 1200);
+    setTimeout(() => { trySendPass(); trySendProfile(); }, 1200);
     if (svc.joinMuted === false && isLive() && me.role !== 'guest') setMic(true);
     render(); updateLive(); micUi(); renderRing();
     if (!silent) toast(`Welcome, ${String(me.name).split(' ')[0]}`);
@@ -402,6 +402,7 @@
     if (m.t === 'file-start' || m.t === 'file-part') return onFileData(m);
     if (m.t === 'file-no') { toast(m.why === 'big' ? 'That file is too big. Please keep it under 8 MB.' : m.why === 'slow' ? 'Please wait a moment before sending another file.' : 'That file is no longer available.', 'warn'); return; }
     if (m.t === 'pass-result') return passResult(m);
+    if (m.t === 'profile-result') return profileResult(m);
     if (m.t === 'chat') return addChat(m.name || 'Someone', m.text, false);
     if (m.t === 'prayer') return amAdmin() ? onPrayer(m) : undefined;
     if (m.t === 'roster') {
@@ -999,11 +1000,15 @@
   }
   $('#cMe').onclick = () => {
     if (!me) return;
+    newPhoto = '';
+    const prof = loadProfile();
     paintPhoto($('#msPhoto'), me);
-    $('#msName').textContent = me.name;
+    $('#msName').value = me.name;
+    $('#msRegion').value = (prof && prof.region !== undefined ? prof.region : me.region) || '';
+    $('#msTown').value = (prof && prof.town !== undefined ? prof.town : me.town) || '';
     $('#msUser').textContent = `Username: ${me.identity}`;
-    $('#npErr').textContent = '';
-    passStatus();
+    $('#npErr').textContent = ''; $('#pfErr').textContent = '';
+    passStatus(); profStatus();
     openSheet('#meSheet');
   };
   $('#npEye').onclick = () => { const i = $('#npPass'); i.type = i.type === 'password' ? 'text' : 'password'; $('#npEye').textContent = i.type === 'password' ? 'Show' : 'Hide'; };
@@ -1017,6 +1022,64 @@
     $('#npPass').value = ''; $('#npPass2').value = '';
     if (DEMO) { savePassReq(null); $('#npStatus').hidden = false; $('#npStatus').textContent = 'Done — your new password works now.'; return; }
     trySendPass();
+  };
+  /* ---------------- my account: name, picture and location ----------------
+     Saved on the church PC (which uploads the new picture and name). Kept on this phone until the PC has it. */
+  let newPhoto = '';
+  const loadProfile = () => { try { return JSON.parse(localStorage.getItem('jd-profile') || 'null'); } catch { return null; } };
+  const loadProfReq = () => { try { return JSON.parse(localStorage.getItem('jd-prof-req') || 'null'); } catch { return null; } };
+  const saveProfReq = (r) => { try { r ? localStorage.setItem('jd-prof-req', JSON.stringify(r)) : localStorage.removeItem('jd-prof-req'); } catch { toast('This phone is full. Free some space and try again.', 'warn'); } };
+  (() => { const sel = $('#msRegion'); for (const r of PhotoCrop.GHANA_REGIONS) { const o = document.createElement('option'); o.textContent = r; sel.appendChild(o); } })();
+  function profStatus() {
+    const r = loadProfReq(); const el = $('#pfStatus');
+    const mine = r && me && r.id === me.identity;
+    el.hidden = !mine;
+    if (mine) el.textContent = room ? 'Sending your details to the church PC…' : 'Your details are saved on this phone. They will reach the church PC as soon as this phone connects to it.';
+  }
+  function trySendProfile() {
+    const r = loadProfReq();
+    if (r && me && r.id === me.identity && room) {
+      if (r.photo) {
+        const PART = 15000, n = Math.ceil(r.photo.length / PART);
+        for (let i = 0; i < n; i++) send({ t: 'set-profile-part', rid: r.rid, i, n, d: r.photo.slice(i * PART, (i + 1) * PART) });
+      }
+      send({ t: 'set-profile', rid: r.rid, name: r.name, region: r.region, town: r.town, photo: !!r.photo });
+    }
+    profStatus();
+  }
+  function profileResult(m) {
+    const r = loadProfReq();
+    if (!r || m.rid !== r.rid) return;
+    saveProfReq(null);
+    if (!m.ok) { $('#pfStatus').hidden = true; $('#pfErr').textContent = m.text || 'The church PC could not save your details.'; return; }
+    me.name = m.name || r.name; me.region = r.region; me.town = r.town;
+    if (r.photo) me.photo = r.photo;
+    try { localStorage.setItem('jd-profile', JSON.stringify({ region: r.region, town: r.town })); } catch {}
+    saveMe(me);
+    if (room && room.localParticipant) { room.localParticipant.name = me.name; room.localParticipant.attributes = { ...room.localParticipant.attributes, photo: me.photo || '' }; }
+    paintPhoto($('#cMe'), me); paintPhoto($('#msPhoto'), me); render();
+    $('#pfStatus').hidden = false; $('#pfStatus').textContent = 'Saved. Everyone in the call now sees your new details.';
+    toast('Your details have been updated.');
+  }
+  async function choosePhoto(inp) {
+    const f = inp.files && inp.files[0]; inp.value = '';
+    if (!f) return;
+    try {
+      const d = await PhotoCrop.crop(f);
+      if (d) { newPhoto = d; paintPhoto($('#msPhoto'), { name: me.name, photo: d }); }
+    } catch (e) { toast(e.message || 'Could not use that picture.', 'warn'); }
+  }
+  $('#msCam').onchange = (e) => choosePhoto(e.target);
+  $('#msGallery').onchange = (e) => choosePhoto(e.target);
+  $('#profForm').onsubmit = (e) => {
+    e.preventDefault();
+    $('#pfErr').textContent = '';
+    const name = $('#msName').value.replace(/\s+/g, ' ').trim();
+    if (name.length < 2) return ($('#pfErr').textContent = 'Please type your name.');
+    const req = { id: me.identity, rid: Math.random().toString(36).slice(2, 10), name, region: $('#msRegion').value, town: $('#msTown').value.trim().slice(0, 40), photo: newPhoto || '' };
+    saveProfReq(req); newPhoto = '';
+    if (DEMO) { profileResult({ ok: true, rid: req.rid, name }); return; }
+    trySendProfile();
   };
   $('#jForgot').onclick = () => { $('#jForgotHelp').hidden = !$('#jForgotHelp').hidden; };
 
